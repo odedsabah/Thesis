@@ -1,0 +1,528 @@
+---
+title: "ITAI_DS"
+output: html_document
+date: "2024-09-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+#setwd(" ") 
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$get('label')
+```
+
+```{r}
+library(dplyr)
+library(vegan)
+library(ggplot2)
+library(forcats)
+library(ade4)
+library(kableExtra)
+library(stargazer)
+
+```
+
+```{r}
+G_TAXA_FROM_METAPHLAN <- as.data.frame(read.csv("~/metaanalysis/datasets/ITAI/ITAI_DS_COURSE_G.csv", check.names = FALSE))
+S_TAXA_FROM_METAPHLAN <- as.data.frame(read.csv("~/metaanalysis/datasets/ITAI/ITAI_DS_COURSE_s.csv", check.names = FALSE))
+METADATA <- as.data.frame(read.csv("~/metaanalysis/datasets/ITAI/METADATA_ITAI_DS_COURSE.csv"))
+```
+
+```{r}
+METADATA$X <- NULL
+METADATA$Disease <- factor(METADATA$Disease)
+METADATA$Country <- factor(METADATA$Country)
+METADATA$Source <- factor(METADATA$Source)
+
+METADATA$Obesity <- factor(ifelse(METADATA$BMI >= 30, "Obesity", "non-Obesity"))
+METADATA$Age_group <- factor(ifelse(METADATA$Age >=18, "Adult", "Young"))
+METADATA$Sex <- factor(ifelse(METADATA$Sex == 0, NA, METADATA$Sex))
+METADATA$Country_group <- factor(ifelse(METADATA$Country == "America", "America", "Europe"))
+
+METADATA <- METADATA %>%
+  mutate(Source = fct_recode(Source,
+                            "Federici et al., (2022)" = "Eran_Elinav", 
+                             "HMP2 Pilot" = "HMP2_pilot",
+                             "Lewis (2015)" = "Lewis",
+                             "1000 IBD" = "IBD_1000")) %>% 
+  mutate(Source = case_when(
+    Source == "Federici et al., (2022)" & Country_group == "Europe" ~ "Federici et al., (2022) - Europe",
+    Source == "Federici et al., (2022)" & Country_group == "America" ~ "Federici et al., (2022) - America",
+    TRUE ~ as.character(Source))) %>%
+  mutate(Source = as.factor(Source))
+
+
+table(METADATA$Disease)
+table(METADATA$Source)
+```
+
+```{r}
+sector_color_palette <- c("Federici et al., (2022)"="#001219",
+                          "Federici et al., (2022) - America"="#6096ba", 
+                          "Federici et al., (2022) - Europe" = "#9a031e",
+                          "HMP1"="#0b9497",             
+                          "HMP2"="#84c6bf",             
+                          "HMP3"="#006074",             
+                          "IBDMDB"="#8d99ae",          
+                          "HMP2 Pilot"="#81B2D4",       
+                          "IBDMDB2"="#c8d5b9",          
+                          "Lewis (2015)"="#84c9df",     
+                          "MetaHit"="#9c2327",         
+                          "MetaHit2"="#ead9a1",        
+                          "LLDeep"="#cb6803",          
+                          "PRISM"="#bc3f04",
+                          "1000 IBD"="#be7c4d",
+                          "America" = "#81B2D4",
+                          "Europe" = "#ead9a1",
+                          "Denmark" = "#bc3f04", 
+                          "France" = "#9a031e",
+                          "Germany" = "#9c2327",
+                          "Netherland" = "#bc3f04",
+                          "Spain" = "#9c2327") 
+```
+
+##### Genus levels 
+```{r}
+rownames(G_TAXA_FROM_METAPHLAN) <- G_TAXA_FROM_METAPHLAN[,1]
+G_TAXA_FROM_METAPHLAN[,1] <- NULL
+
+G_TAXA_FROM_METAPHLAN[] <- lapply(G_TAXA_FROM_METAPHLAN, function(x) {
+  x <- as.numeric(as.character(x))
+  x[is.na(x)] <- 0
+  x[x <= 0.1] <- 0 # Rarefaction threshold
+  return(x)
+})
+
+G_TAXA_FROM_METAPHLAN <- as.data.frame(t(G_TAXA_FROM_METAPHLAN[, apply(G_TAXA_FROM_METAPHLAN, 2, function(col) any(col != 0))]))
+
+G_TAXA_FROM_METAPHLAN$Sample_ID <- rownames(G_TAXA_FROM_METAPHLAN)
+
+META_G_TAXA <- merge(METADATA, G_TAXA_FROM_METAPHLAN, by = "Sample_ID", all = TRUE) 
+
+
+META_G_TAXA_ALL <- META_G_TAXA  %>%
+  filter(!is.na(Disease), Disease != "IBD") %>% #,
+  #        Country != "Israel",
+  #        !is.na(Sex), !is.na(BMI), !is.na(Age)) %>%
+   mutate(across(where(is.factor), ~fct_drop(.)))
+
+
+META_G_TAXA_ALL$Sample_ID <- paste(META_G_TAXA_ALL$Source, ".v.", META_G_TAXA_ALL$Sample_ID, sep = "")
+rownames(META_G_TAXA_ALL) <- META_G_TAXA_ALL$Sample_ID
+
+META_G_TAXA_ALL[, -c(1:14)] <- lapply(META_G_TAXA_ALL[, -c(1:14)], function(x) as.numeric(as.character(x)))
+
+table(META_G_TAXA_ALL$Disease)
+```
+
+```{r}
+trs <- function(x) asin(sqrt(x*0.01))
+permanova1 <- META_G_TAXA_ALL %>% mutate_each(funs(trs), colnames(META_G_TAXA_ALL[,-c(1:14)]))
+
+permanova1[, 15:ncol(permanova1)][is.na(permanova1[, 15:ncol(permanova1)])] <- 0
+empty_rows <- which(rowSums(permanova1[, c(15:ncol(permanova1))], na.rm=TRUE) == 0) 
+permanova1 <- permanova1[-empty_rows, ]
+
+# Compute Bray-Curtis distances
+BC.dist = vegdist(permanova1[,c(15:ncol(permanova1))], method = 'bray')
+
+# Compute Principal Coordinates Analysis
+pcoa_all = dudi.pco(BC.dist, scannf=FALSE, nf=3)
+
+# Extract variance explained by axes
+evals = eigenvals(pcoa_all)
+Variance = evals / sum(evals)
+Variance1 = 100 * signif(Variance[1], 2)
+Variance2 = 100 * signif(Variance[2], 2)
+Variance3 = 100 * signif(Variance[3], 2)
+
+all_pheno = data.frame(pcoa_all$li$A1, pcoa_all$li$A2, permanova1$Disease,
+permanova1$Sample_ID,permanova1$Source, permanova1$Country, permanova1$Sex, permanova1$Age, permanova1$BMI, permanova1$FCP, permanova1$Obesity,
+permanova1$Age_group, permanova1$Country_group)
+colnames(all_pheno) = c("x","y","Phenotype","Sample_ID", "Source", "Nationally", "Sex", "Age", "BMI", "FCP", "Obesity", "Age_group", "continental")
+
+table(all_pheno$Phenotype)
+
+table(all_pheno$Source)
+```
+
+```{r}
+result_pheno <- adonis2(BC.dist ~ Phenotype, data = all_pheno, permutations = 999)
+
+# library(RVAideMemoire)
+# 
+# pairwise_result <- pairwise.perm.manova(BC.dist, fact = all_pheno$Phenotype, nperm = 999)
+
+```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_pheno_g_levels_uajestred_meta.png", width = 12000, height = 8000, res = 1200)
+
+Fig1 <- ggplot(all_pheno, aes(x, y, color = factor(Phenotype))) +
+  geom_point(size = 2) +
+  stat_ellipse(level = 0.95) +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep = ""),
+       y = paste("PCoA2 (", Variance2, "%)", sep = ""),
+       title = ' ') +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_manual(values=c("nonIBD"="#e9d8a6", "CD" = "#001219", "UC" = "#ae2012"),
+  labels = c("Crohn's Disease (CD)", "Health Control (nonIBD)" , "Ulcerative Colitis (UC)")) + 
+  geom_segment(data = all_pheno %>% 
+                 group_by(Phenotype) %>% 
+                 summarise(x = mean(x), y = mean(y)),
+               aes(x = 0, y = 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black") +
+  geom_label(data = all_pheno %>% 
+               group_by(Phenotype) %>% 
+               summarise(x = mean(x), y = mean(y)),
+             aes(label = Phenotype), 
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+Fig1+annotate("text", label = paste0(c("R-squared = ",round(result_pheno$R2[1],3),'\n',"p-value = ",result_pheno$`Pr(>F)`[1]),collapse = ''),
+              x = -0.43, y = 0.55, color = "black") #for genus is -0.43 | #for genus is -0.3
+dev.off()
+```
+
+##### Species levels 
+```{r}
+rownames(S_TAXA_FROM_METAPHLAN) <- S_TAXA_FROM_METAPHLAN[,1]
+S_TAXA_FROM_METAPHLAN[,1] <- NULL
+
+S_TAXA_FROM_METAPHLAN[] <- lapply(S_TAXA_FROM_METAPHLAN, function(x) {
+  x <- as.numeric(as.character(x))
+  x[is.na(x)] <- 0
+  x[x <= 0.1] <- 0 # Rarefaction threshold
+  return(x)
+})
+
+S_TAXA_FROM_METAPHLAN <- as.data.frame(t(S_TAXA_FROM_METAPHLAN[, apply(S_TAXA_FROM_METAPHLAN, 2, function(col) any(col != 0))]))
+
+S_TAXA_FROM_METAPHLAN$Sample_ID <- rownames(S_TAXA_FROM_METAPHLAN)
+
+META_S_TAXA <- merge(METADATA, S_TAXA_FROM_METAPHLAN, by = "Sample_ID", all = TRUE) 
+
+META_S_TAXA_ALL <- META_S_TAXA %>% filter(!is.na(Disease), Disease != "IBD") # , Country != "Israel", !is.na(Sex),!is.na(BMI), !is.na(Age))
+
+META_S_TAXA_ALL$Sample_ID <- paste(META_S_TAXA_ALL$Source, ".v.", META_S_TAXA_ALL$Sample_ID, sep = "")
+rownames(META_S_TAXA_ALL) <- META_S_TAXA_ALL$Sample_ID
+
+META_S_TAXA_ALL[, -c(1:14)] <- lapply(META_S_TAXA_ALL[, -c(1:14)], function(x) as.numeric(as.character(x)))
+
+table(META_S_TAXA_ALL$Disease)
+```
+
+```{r}
+permanova1 <- META_S_TAXA_ALL %>% mutate_each(funs(trs), colnames(META_S_TAXA_ALL[,-c(1:14)]))
+
+permanova1[, 15:ncol(permanova1)][is.na(permanova1[, 15:ncol(permanova1)])] <- 0
+empty_rows <- which(rowSums(permanova1[, c(15:ncol(permanova1))], na.rm=TRUE) == 0) 
+permanova1 <- permanova1[-empty_rows, ]
+
+# Compute Bray-Curtis distances
+BC.dist = vegdist(permanova1[,c(15:ncol(permanova1))], method = 'bray')
+
+# Compute Principal Coordinates Analysis
+pcoa_all = dudi.pco(BC.dist, scannf=FALSE, nf=3)
+
+# Extract variance explained by axes
+evals = eigenvals(pcoa_all)
+Variance = evals / sum(evals)
+Variance1 = 100 * signif(Variance[1], 2)
+Variance2 = 100 * signif(Variance[2], 2)
+Variance3 = 100 * signif(Variance[3], 2)
+
+all_pheno = data.frame(pcoa_all$li$A1, pcoa_all$li$A2, permanova1$Disease,
+permanova1$Sample_ID,permanova1$Source, permanova1$Country, permanova1$Sex, permanova1$Age, permanova1$BMI, permanova1$FCP, permanova1$Obesity,
+permanova1$Age_group, permanova1$Country_group)
+colnames(all_pheno) = c("x","y","Phenotype","Sample_ID", "Source", "Nationally", "Sex", "Age", "BMI", "FCP", "Obesity", "Age_group", "continental")
+
+table(all_pheno$Phenotype)
+```
+
+```{r}
+result_pheno <- adonis2(BC.dist ~ Phenotype, data = all_pheno, permutations = 999)
+result_pheno
+```
+
+# This plot represents the phenotypic control data from all studies.
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_pheno_s_levels_uajestred_meta.png", width = 12000, height = 8000, res = 1200)
+
+Fig2 <- ggplot(all_pheno, aes(x, y, color = factor(Phenotype))) +
+  geom_point(size = 2) +
+  stat_ellipse(level = 0.95) +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep = ""),
+       y = paste("PCoA2 (", Variance2, "%)", sep = ""),
+       title = ' ') +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_manual(values=c("nonIBD"="#e9d8a6", "CD" = "#001219", "UC" = "#ae2012"),
+  labels = c("Crohn's Disease (CD)", "Health Control (nonIBD)" , "Ulcerative Colitis (UC)")) + 
+  geom_segment(data = all_pheno %>% 
+                 group_by(Phenotype) %>% 
+                 summarise(x = mean(x), y = mean(y)),
+               aes(x = 0, y = 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black") +
+  geom_label(data = all_pheno %>% 
+               group_by(Phenotype) %>% 
+               summarise(x = mean(x), y = mean(y)),
+             aes(label = Phenotype), 
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+Fig2+annotate("text", label = paste0(c("R-squared = ",round(result_pheno$R2[1],3),'\n',"p-value = ",result_pheno$`Pr(>F)`[1]),collapse = ''),
+              x = -0.35, y = 0.55, color = "black") #for genus is -0.43 | #for genus is -0.3
+dev.off()
+```
+
+##### nonIBD
+
+```{r}
+METADATA_TABLE <- METADATA %>% filter(!is.na(Disease), Disease == "nonIBD" , Country != "Israel", !is.na(Sex),!is.na(BMI), !is.na(Age))
+
+vars <- c("Country","Age", "Sex","BMI")
+tab00 <- print(CreateTableOne(vars = vars, 
+                             data = METADATA_TABLE, addOverall = T, factorVars = vars[!vars %in% c("Age", "BMI")]
+                             ),showAllLevels = TRUE, nonnormal = c("Age", "BMI")) #[,-c(8)]
+
+
+colnames(tab00)[colnames(tab00) == "level"] <- " "
+
+
+rows_to_indent <- which(grepl("   ", rownames(tab00)))
+
+tab00 <- as.data.frame(tab00)
+
+for (col in names(tab00)) {
+  if (is.character(tab00[[col]])) {
+    tab00[[col]] <- gsub(".*\\b(NA|NaN|0\\.0)\\b.*", " ", tab00[[col]])
+  }
+}
+tab00[is.na(tab00)] <- " " 
+rownames(tab00) <- c("n", "Nationally (%)", "", " ", "Age (median [IQR])", "Sex (%)", "  " , "BMI (median [IQR])")
+
+```
+
+```{r}
+ tab <- kable(tab00, format = "latex", booktabs = TRUE) %>% 
+  kable_styling(latex_options = c("striped", "scale_down")) %>% 
+  pack_rows("Baseline characteristics", which(rownames(tab00) == "n"), which(rownames(tab00) == "BMI (median [IQR])"), extra_latex_after = "\\midrule") %>%
+  row_spec(which(rownames(tab00) == "BMI (median [IQR])"), extra_latex_after = "\\midrule") %>% 
+row_spec(c(1), bold = T, hline_after = TRUE) %>% 
+column_spec(c(1), border_right = TRUE)
+
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/nonIBD_after_missing.pdf")
+```
+
+##### Genus levels 
+```{r}
+META_G_TAXA <- merge(METADATA, G_TAXA_FROM_METAPHLAN, by = "Sample_ID", all = TRUE) 
+
+META_G_TAXA <- META_G_TAXA %>% filter(!is.na(Disease), Disease == "nonIBD", Country != "Israel" ) #, !is.na(Sex), !is.na(Age), !is.na(BMI))
+
+META_G_TAXA$Sample_ID <- paste(META_G_TAXA$Source, ".v.", META_G_TAXA$Sample_ID, sep = "")
+rownames(META_G_TAXA) <- META_G_TAXA$Sample_ID
+
+META_G_TAXA[, -c(1:14)] <- lapply(META_G_TAXA[, -c(1:14)], function(x) as.numeric(as.character(x)))
+
+table(META_G_TAXA$Disease)
+
+```
+
+```{r}
+permanova1 <- META_G_TAXA %>% mutate_each(funs(trs), colnames(META_G_TAXA[,-c(1:14)]))
+
+permanova1[, 15:ncol(permanova1)][is.na(permanova1[, 15:ncol(permanova1)])] <- 0
+empty_rows <- which(rowSums(permanova1[, c(15:ncol(permanova1))], na.rm=TRUE) == 0) 
+permanova1 <- permanova1[-empty_rows, ]
+
+# Compute Bray-Curtis distances
+BC.dist = vegdist(permanova1[,c(15:ncol(permanova1))], method = 'bray')
+
+# Compute Principal Coordinates Analysis
+pcoa_all = dudi.pco(BC.dist, scannf=FALSE, nf=3)
+
+# Extract variance explained by axes
+evals = eigenvals(pcoa_all)
+Variance = evals / sum(evals)
+Variance1 = 100 * signif(Variance[1], 2)
+Variance2 = 100 * signif(Variance[2], 2)
+Variance3 = 100 * signif(Variance[3], 2)
+
+all_pheno = data.frame(pcoa_all$li$A1, pcoa_all$li$A2, permanova1$Disease,
+permanova1$Sample_ID,permanova1$Source, permanova1$Country, permanova1$Sex, permanova1$Age, permanova1$BMI, permanova1$FCP, permanova1$Obesity,
+permanova1$Age_group, permanova1$Country_group)
+colnames(all_pheno) = c("x","y","Phenotype","Sample_ID", "Source", "Nationally", "Sex", "Age", "BMI", "FCP", "Obesity", "Age_group", "continental")
+
+table(all_pheno$Nationally)
+table(all_pheno$continental)
+```
+
+```{r}
+add_stars <- function(p_value) {
+  if (is.na(p_value)) return("")
+  if (p_value <= 0.001) return(" ***")
+  if (p_value <= 0.01) return(" **")
+  if (p_value <= 0.05) return(" *")
+  if (p_value <= 0.1) return(" .")
+  return("")
+}
+
+result_pheno_g <- as.data.frame(adonis2(BC.dist ~ Nationally+Age+Sex+BMI , data = all_pheno, permutations = 999))
+
+# Add significance stars to the Pr(>F) column
+result_pheno_g <- result_pheno_g %>%
+  mutate(`P value` = paste(`Pr(>F)`, sapply(`Pr(>F)`, add_stars))) %>%
+  mutate(`R2 (%)` = round(`R2` * 100, 3)) %>% 
+  mutate(`P value` = gsub("NA", " ", `P value`)) %>%
+  select(`R2 (%)`, `P value`) %>%
+  slice(-6)
+
+table(all_pheno$Nationally)
+```
+
+
+# ```{r}
+# result_pheno <- adonis2(BC.dist ~ Nationally, data = all_pheno, permutations = 999, strata = all_pheno$Source)
+# result_pheno
+# ```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_nonIBD_g_levels.png", width = 12000, height = 8000, res = 1200)
+#png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_nonIBD_g_Source.png", width = 12000, height = 8000, res = 1200)
+
+Fig3 <- ggplot(all_pheno, aes(x, y, color = factor(Source))) +
+  geom_point(size = 2) +
+  stat_ellipse(level = 0.95) +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep = ""),
+       y = paste("PCoA2 (", Variance2, "%)", sep = ""),
+       title = ' ') +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_manual(values=sector_color_palette) + 
+  geom_segment(data = all_pheno %>% 
+                 group_by(continental) %>% 
+                 summarise(x = mean(x), y = mean(y)),
+               aes(x = 0, y = 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black") +
+  geom_label(data = all_pheno %>% 
+               group_by(continental) %>% 
+               summarise(x = mean(x), y = mean(y)),
+             aes(label = continental), 
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+#Fig3
+Fig3+annotate("text", label = paste0(c("R-squared = ",round(result_pheno$R2[1],3),'\n',"p-value = ",result_pheno$`Pr(>F)`[1]),collapse = ''),
+              x = -0.48, y = 0.55, color = "black") #for genus is -0.43 | #for genus is -0.3
+dev.off()
+```
+
+##### Species levels 
+```{r}
+META_S_TAXA <- merge(METADATA, S_TAXA_FROM_METAPHLAN, by = "Sample_ID", all = TRUE) 
+
+META_S_TAXA <- META_S_TAXA %>% filter(!is.na(Disease), Disease == "nonIBD", Country != "Israel", !is.na(Sex), !is.na(Age) ,!is.na(BMI))
+
+META_S_TAXA$Sample_ID <- paste(META_S_TAXA$Source, ".v.", META_S_TAXA$Sample_ID, sep = "")
+rownames(META_S_TAXA) <- META_S_TAXA$Sample_ID
+
+META_S_TAXA[, -c(1:14)] <- lapply(META_S_TAXA[, -c(1:14)], function(x) as.numeric(as.character(x)))
+
+table(META_S_TAXA$Disease)
+```
+
+```{r}
+permanova1 <- META_S_TAXA %>% mutate_each(funs(trs), colnames(META_S_TAXA[,-c(1:14)]))
+
+permanova1[, 15:ncol(permanova1)][is.na(permanova1[, 15:ncol(permanova1)])] <- 0
+empty_rows <- which(rowSums(permanova1[, c(15:ncol(permanova1))], na.rm=TRUE) == 0) 
+permanova1 <- permanova1[-empty_rows, ]
+
+# Compute Bray-Curtis distances
+BC.dist = vegdist(permanova1[,c(15:ncol(permanova1))], method = 'bray')
+
+# Compute Principal Coordinates Analysis
+pcoa_all = dudi.pco(BC.dist, scannf=FALSE, nf=3)
+
+# Extract variance explained by axes
+evals = eigenvals(pcoa_all)
+Variance = evals / sum(evals)
+Variance1 = 100 * signif(Variance[1], 2)
+Variance2 = 100 * signif(Variance[2], 2)
+Variance3 = 100 * signif(Variance[3], 2)
+
+all_pheno = data.frame(pcoa_all$li$A1, pcoa_all$li$A2, permanova1$Disease,
+permanova1$Sample_ID,permanova1$Source, permanova1$Country, permanova1$Sex, permanova1$Age, permanova1$BMI, permanova1$FCP, permanova1$Obesity,
+permanova1$Age_group, permanova1$Country_group)
+colnames(all_pheno) = c("x","y","Phenotype","Sample_ID", "Source", "Nationally", "Sex", "Age", "BMI", "FCP", "Obesity", "Age_group", "continental")
+
+table(all_pheno$Phenotype)
+```
+
+```{r}
+result_pheno_s <- as.data.frame(adonis2(BC.dist ~ Nationally+Age+Sex+BMI , data = all_pheno, permutations = 999))
+
+
+# Add significance stars to the Pr(>F) column
+result_pheno_s <- result_pheno_s %>%
+  mutate(`P value` = paste(`Pr(>F)`, sapply(`Pr(>F)`, add_stars))) %>%
+  mutate(`R2 (%)` = round(`R2` * 100, 3)) %>% 
+  mutate(`P value` = gsub("NA", " ", `P value`)) %>%
+  select(`R2 (%)`, `P value`) %>%
+  slice(-6)
+
+result_pheno_nonIBD <- cbind(result_pheno_g, result_pheno_s)
+```
+
+```{r}
+tab <- kable(result_pheno_nonIBD, format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>% 
+  row_spec(5, extra_css = "border-bottom: 2px solid #000000;") %>%
+  add_header_above(c(" " = 1, "Genus level" = 2, "Species level" = 2)) %>%
+  column_spec(1, border_right = TRUE) %>%
+  footnote(symbol = c("*** p < 0.001, ** p < 0.01, * p < 0.05"))
+  
+save_kable(tab, file = "~/metaanalysis/datasets/FIGURES/PCoA/adois_summray_nonIBD.pdf")
+```
+
+
+# This plot represents the phenotypic control data from all studies.
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_nonIBD_s_levels.png", width = 12000, height = 8000, res = 1200)
+
+Fig4 <- ggplot(all_pheno, aes(x, y, color = factor(Nationally))) +
+  geom_point(size = 2) +
+  stat_ellipse(level = 0.95) +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep = ""),
+       y = paste("PCoA2 (", Variance2, "%)", sep = ""),
+       title = ' ') +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_manual(values=sector_color_palette) + 
+  geom_segment(data = all_pheno %>% 
+                 group_by(continental) %>% 
+                 summarise(x = mean(x), y = mean(y)),
+               aes(x = 0, y = 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black") +
+  geom_label(data = all_pheno %>% 
+               group_by(continental) %>% 
+               summarise(x = mean(x), y = mean(y)),
+             aes(label = continental), 
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+
+Fig4
+# Fig4+annotate("text", label = paste0(c("R-squared = ",round(result_pheno$R2[1],3),'\n',"p-value = ",result_pheno$`Pr(>F)`[1]),collapse = ''),
+#               x = -0.43, y = 0.55, color = "black") #for genus is -0.43 | #for genus is -0.3
+dev.off()
+```
+
+```{r}
+
+```
+
+
+

@@ -1,0 +1,2121 @@
+---
+title: "PCoA and ANCOM"
+output:
+  pdf_document:
+editor_options:
+  chunk_output_type: console
+  numbersections: true
+  header-includes:
+   - "\\usepackage{float}"
+   - "\\usepackage{graphicx}"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+
+```{r, include=FALSE}
+setwd("~/metaanalysis/datasets/ANCOM")
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$get('label')
+
+```
+
+# This packages used to ANCOM 
+```{r, include=FALSE}
+library(readxl)
+library(tidyverse)
+library(nloptr)
+# library(phyloseq)
+library(stringr)
+library(ggpubr)
+library(magrittr)
+library(qwraps2)
+library(pander)
+library(tableone)
+source("~/metaanalysis/datasets/ANCOM/ancom_bc.R")
+```
+
+# This packages used to PCoA 
+```{r, include=FALSE}
+# unavailable_pkg <- setdiff(c("vegan","ape","ade4","ggplot2","ggpubr","easyGgplot2","dplyr"),rownames(installed.packages()))
+# install.packages(unavailable_pkg, repos = "http://cran.us.r-project.org")
+
+library(vegan)
+library(ape)
+library(ade4)
+library(ggplot2)
+library(ggpubr)
+library(easyGgplot2)
+library(dplyr)
+library(ade4)
+library(reticulate)
+library(dplyr)
+library(tidyr)
+library(viridis)
+library(circlize)
+library(knitr)
+library(kableExtra)
+library(ggridges)
+library(Rtsne)
+library(caret)
+library(kernelshap)
+library(shapviz)
+
+```
+
+```{r}
+Summray.project <- py_run_file("/home/odeds/metaanalysis/datasets/Summary_Project.py")
+analysis <- Summray.project$analysis
+results <- Summray.project$results
+```
+
+```{r}
+IBD_1000 = results$IBD_1000
+IBD_1000_T = results$IBD_1000_T
+
+Eran_Elinav = results$Eran_Elinav
+Eran_Elinav_T = results$Eran_Elinav_T
+
+#Gevers = results$Gevers
+#Gevers_T = results$Gevers_T
+
+HMP1 = results$HMP1
+HMP1_T = results$HMP1_T
+
+HMP2 = results$HMP2
+HMP2_T = results$HMP2_T
+
+HMP2_pilot = results$HMP2_pilot
+HMP2_pilot_T = results$HMP2_pilot_T
+
+HMP3 = results$HMP3
+HMP3_T = results$HMP3_T
+
+ibdmdb = results$ibdmdb
+ibdmdb_T = results$ibdmdb_T
+
+ibdmdb2 = results$ibdmdb2
+ibdmdb2_T = results$ibdmdb2_T
+
+Lewis = results$Lewis
+Lewis_T = results$Lewis_T
+
+MetaHit = results$MetaHit
+MetaHit_T = results$MetaHit_T
+
+MetaHit2 = results$MetaHit2
+MetaHit2_T = results$MetaHit2_T
+
+LLDeep = results$LLDeep
+LLDeep_T = results$LLDeep_T
+
+PRISM = results$PRISM
+PRISM_T = results$PRISM_T
+
+disease_counts = results$disease_counts
+disease_counts_for_table <- as.data.frame(t(disease_counts))
+disease_counts_for_table$'Patients (n)' <- rowSums(disease_counts_for_table)
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "Missing"] <- "Missing (%)"
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "HMP2_pilot"] <- "HMP2 Pilot"
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "EranElinav"] <- "Federici et al., (2022)"
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "Lewis"] <- "Lewis (2015)"
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "IBD_1000"] <- "1000 IBD"
+rownames(disease_counts_for_table)[rownames(disease_counts_for_table) == "Total_Patients"] <- "Total"
+
+disease_counts_for_table <- disease_counts_for_table[, c("Patients (n)", "CD", "UC", "nonIBD", "IBD")]
+```
+
+```{r}
+tab <- kable(disease_counts_for_table, format = "latex", booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "scale_down"), full_width = T) %>%
+    column_spec(c(2), border_right = T) %>%
+    column_spec(1, width = "3.5cm") %>% 
+    add_header_above(c("","", "Phenotypes"= 4)) %>%
+    row_spec(14, bold = T)
+
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/PatientsTable.pdf")
+
+```
+
+```{r}
+ibdmdb2 <- ibdmdb2 %>%
+  mutate(fcp = case_when(
+    !is.na(fecalcal) & is.na(fecalcal_ng_ml) ~ fecalcal,
+    is.na(fecalcal) & !is.na(fecalcal_ng_ml) ~ fecalcal_ng_ml,
+    !is.na(fecalcal) & !is.na(fecalcal_ng_ml) ~ pmax(fecalcal, fecalcal_ng_ml, na.rm = TRUE),
+    TRUE ~ NA_real_
+  ))
+
+HMP2_pilot <- HMP2_pilot %>%
+  mutate(fcp = case_when(
+    !is.na(fecalcal) & is.na(fecalcal_ng_ml) ~ fecalcal,
+    is.na(fecalcal) & !is.na(fecalcal_ng_ml) ~ fecalcal_ng_ml,
+    !is.na(fecalcal) & !is.na(fecalcal_ng_ml) ~ pmax(fecalcal, fecalcal_ng_ml, na.rm = TRUE),
+    TRUE ~ NA_real_
+  ))
+
+
+Eran_Elinav$Gender[Eran_Elinav$Gender == "unknown"] <- "Male"
+Lewis$FCP <- Lewis$FCP/10
+HMP1$Country = "America"
+HMP2$Country = "America"
+HMP3$Country = "America"
+HMP3$"study design" = "nonIBD"
+IBD_1000$Country = "Netherland"
+LLDeep$Country = "Netherland"
+PRISM$Country = "America"
+PRISM$site_name = "Massachusetts General Hospital"
+Lewis$Country = "America"
+ibdmdb2$Country = "America"
+ibdmdb$Country = "America"
+HMP2_pilot$Country = "America"
+
+```
+
+```{r}
+column_mappings <- list(
+  
+    IBD_1000 = list(
+    Sample_ID = "index",
+    Sex = "Sex",
+    Age = "age_at_last_record_diagnosis",
+    BMI = "bmi",
+    Disease = "diagnosis_last_record", 
+    Country = "Country"
+  ), 
+  Eran_Elinav = list(
+    Sample_ID = "index",
+    Sex = "Gender",
+    Age = "Age",
+    Country = "Cohort",
+    Disease = "Disease", 
+    Disease_status = "Disease State"
+  ),
+  HMP1 = list(
+    Sample_ID = "index",
+    Sex = "host_sex",
+    Disease = "study design",
+    Country = "Country"
+  ),
+  HMP2 = list(
+    Sample_ID = "index",
+    Sex = "host_sex",
+    Disease = "study design",
+    Country = "Country"
+    
+  ),
+  HMP3 = list(
+    Sample_ID = "index",
+    Disease = "study design",
+    Country = "Country"
+  ),
+  HMP2_pilot = list(
+    Sample_ID = "index",
+    Sex = "sex",
+    Age = "consent_age",
+    Race = "Specify race",
+    Disease = "diagnosis",
+    Center = "site_name", 
+    FCP = "fcp",
+    Country = "Country"
+  ),
+  IBDMDB = list(
+    Sample_ID = "index",
+    Sex = "sex",
+    Age = "age_at_consent",
+    Race = "specify_race",
+    Disease = "diagnosis",
+    Center = "SiteName",
+    FCP = "fecalcal_ng_ml",
+    Country = "Country"
+  ),
+  IBDMDB2 = list(
+    Sample_ID = "index",
+    Sex = "sex",
+    Age = "consent_age",
+    Race = "Specify race",
+    Disease = "diagnosis",
+    Center = "site_name",
+    FCP = "fcp",
+    Country = "Country"
+  ),
+  MetaHit = list(
+    Sample_ID = "index",
+    Age = "Age",
+    Sex = "Gender",
+    BMI = "BMI",
+    Disease = "diagnosis",
+    Country = "Country"
+  ),
+    MetaHit2 = list(
+    Sample_ID = "index",
+    Sex = "Gender",
+    Age = "Age",
+    BMI= "BMI",
+    Country = "Nationality",
+    Disease = "Health Status"
+  ), 
+  Lewis = list(
+  Sample_ID = "index",
+  Disease = "diagnosis",
+  FCP = "FCP", 
+  Country = "Country"
+  ),
+  
+  LLDeep = list(
+  Sample_ID = "index",
+  Disease = "Study.Group", 
+  fcp = "Fecal.Calprotectin",
+  Country = "Country"
+  ), 
+  
+  PRISM = list(
+  Sample_ID = "index",
+  Disease = "Study.Group",
+  FCP = "Fecal.Calprotectin",
+  Center = "site_name", 
+  Country = "Country",
+  Center = "site_name"
+  
+  )
+)
+
+
+selected_columns <- c("Sample_ID", "Sex", "Age", "BMI", "Race","FCP", "Center", "Country", "Disease", "Disease_status", "Source")
+
+standardize_columns_v2 <- function(df, project_name) {
+  mapping <- column_mappings[[project_name]]
+  
+  df <- df %>% rename(!!!mapping)
+  
+  for (col in selected_columns) {
+    if (!(col %in% names(df))) {
+      df[[col]] <- NA
+    }
+  }
+  
+  df$Source <- project_name
+  
+  return(df[, selected_columns])
+}
+
+dfs <- list(
+  standardize_columns_v2(IBD_1000, "IBD_1000"),
+  standardize_columns_v2(Eran_Elinav, "Eran_Elinav"),
+  standardize_columns_v2(HMP1, "HMP1"),
+  standardize_columns_v2(HMP2, "HMP2"),
+  standardize_columns_v2(HMP3, "HMP3"),
+  standardize_columns_v2(ibdmdb, "IBDMDB"),
+  standardize_columns_v2(HMP2_pilot, "HMP2_pilot"),
+  standardize_columns_v2(ibdmdb2, "IBDMDB2"),
+  standardize_columns_v2(MetaHit, "MetaHit"),
+  standardize_columns_v2(MetaHit2, "MetaHit2"),
+  standardize_columns_v2(Lewis, "Lewis"),
+  standardize_columns_v2(LLDeep, "LLDeep"),
+  standardize_columns_v2(PRISM, "PRISM")
+)
+
+consolidated_df_v2 <- bind_rows(dfs)
+consolidated_df_v2
+```
+
+```{r}
+# Replace variations of "female"
+consolidated_df_v2$Sex[consolidated_df_v2$Sex %in% c("female", "f","F"," female")] <- "Female"
+
+# Replace variations of "male"
+consolidated_df_v2$Sex[consolidated_df_v2$Sex %in% c("male", "m","M"," male")] <- "Male"
+
+# Replace variations of "danish"
+consolidated_df_v2$Country[consolidated_df_v2$Country %in% c("danish")] <- "Denmark"
+
+# Replace variations of "spanish"
+consolidated_df_v2$Country[consolidated_df_v2$Country %in% c("spanish")] <- "Spain"
+consolidated_df_v2$Country[consolidated_df_v2$Country %in% c("US")] <- "America"
+# drop row with Healthy relative in "Disease"
+consolidated_df_v2 <- consolidated_df_v2[!consolidated_df_v2$Disease %in% c("Healthy relative"," NA"), ]
+
+```
+
+```{r}
+to_rf <- consolidated_df_v2[, c("Sex", "Age", "FCP", "Disease", "Disease_status")]
+# Load necessary library
+#install.packages("randomForest")
+library(randomForest)
+
+# Separate the FCP and Disease_status variables into two tables
+X_FCP <- to_rf[, "FCP", drop = FALSE]
+Y_Disease_status <- to_rf[, "Disease_status", drop = FALSE]
+
+# Remove rows with missing values in each table separately
+X_FCP_clean <- X_FCP[!is.na(X_FCP$FCP), , drop = FALSE]
+Y_Disease_status_clean <- Y_Disease_status[!is.na(Y_Disease_status$Disease_status), , drop = FALSE]
+
+# Convert Disease_status to a factor (categorical variable)
+Y_Disease_status_clean$Disease_status <- as.factor(Y_Disease_status_clean$Disease_status)
+
+# Sample rows from X_FCP_clean to match the number of rows in Y_Disease_status_clean
+X_FCP_sampled <- X_FCP_clean[sample(nrow(X_FCP_clean), nrow(Y_Disease_status_clean)), , drop = FALSE]
+
+# Create a new Disease_status column in X_FCP_sampled based on FCP values
+X_FCP_sampled$Disease_status <- ifelse(X_FCP_sampled$FCP > 200, "flare", 
+                                       ifelse(X_FCP_sampled$FCP < 50, "remission", 
+                                              sample(c("flare", "remission"), 
+                                                     size = length(X_FCP_sampled$FCP), 
+                                                     replace = TRUE)))
+
+# Combine the sampled FCP data with the new Disease_status data
+data_for_model <- X_FCP_sampled
+
+# Ensure that Disease_status in the combined data is a factor
+data_for_model$Disease_status <- as.factor(data_for_model$Disease_status)
+
+# Split data into training and testing sets
+set.seed(123) # For reproducibility
+training_indices <- sample(1:nrow(data_for_model), 0.8 * nrow(data_for_model))
+training_data <- data_for_model[training_indices, ]
+testing_data <- data_for_model[-training_indices, ]
+
+# Train the Random Forest model on training data
+rf_model_FCP <- randomForest(FCP ~ ., data = training_data, ntree = 100)
+
+# Print the model output
+print(rf_model_FCP)
+
+# Validate the model on testing data
+predictions <- predict(rf_model_FCP, testing_data)
+confusion_matrix <- table(testing_data$FCP, predictions)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+```
+
+```{r, include=F}
+vars <- c("Sex", "Age", "BMI", "Country","FCP")
+# nonvars <- lapply(vars, function(v) shapiro.test(all_transformed_dfs$consolidated_df_v4_threshold_0[[v]]))
+
+tab0 <- print(CreateTableOne(vars = vars, 
+                             strata = "Source",
+                             data = consolidated_df_v2, addOverall = T, test = F, factorVars = c("Sex", "Country")
+                             ))
+tab0 <- tab0[1,]       
+tab1 <- print(CreateTableOne(vars = vars, 
+                             strata = "Source",
+                             data = consolidated_df_v2[consolidated_df_v2$Disease == "nonIBD", ], addOverall = T, test = F, factorVars = c("Sex", "Country")
+                             )
+              ,nonnormal = c("Age","BMI", "FCP"), missing=T, showAllLevels = F
+                            )
+
+tab2 <- print(CreateTableOne(vars = vars, 
+                             strata = "Source",
+                             data = consolidated_df_v2[consolidated_df_v2$Disease == "CD", ], addOverall = T, test = F, factorVars = c("Sex", "Country")
+                             )
+              ,nonnormal = c("Age","BMI", "FCP"), missing=T, showAllLevels = F
+                            )
+tab3 <- print(CreateTableOne(vars = vars, 
+                             strata = "Source",
+                             data = consolidated_df_v2[consolidated_df_v2$Disease == "UC", ], addOverall = T, test = F, factorVars = c("Sex", "Country")
+                             )
+              ,nonnormal = c("Age","BMI", "FCP"), missing=T, showAllLevels = F
+                            )# [,-c(14,15)]
+
+df_table0 <-as.data.frame(t(tab0))
+df_table1 <- as.data.frame(tab1)
+df_table2 <- as.data.frame(tab2)
+df_table3 <- as.data.frame(tab3)
+
+tab1 <- bind_rows(df_table0, df_table1, df_table2, df_table3)
+
+# temp_column <- tab1[, ncol(tab1) - 1]
+# tab1[, ncol(tab1) - 1] <- tab1[, ncol(tab1)]
+# tab1[, ncol(tab1)] <- temp_column
+
+# 
+# names(tab1)[ncol(tab1) - 1] <- "1000 IBD"
+# names(tab1)[ncol(tab1)] <- "Missing (%)"
+colnames(tab1)[colnames(tab1) == "HMP2_pilot"] <- "HMP2 Pilot"
+colnames(tab1)[colnames(tab1) == "Eran_Elinav"] <- "Federici et al., (2022)"
+colnames(tab1)[colnames(tab1) == "Lewis"] <- "Lewis (2015)"
+colnames(tab1)[colnames(tab1) == "Missing"] <- "Missing (%)"
+colnames(tab1)[colnames(tab1) == "IBD_1000"] <- "1000 IBD"
+
+
+for (col in names(tab1)) {
+  if (is.character(tab1[[col]])) {
+    tab1[[col]] <- gsub(".*\\b(NA|NaN|0\\.0)\\b.*", " ", tab1[[col]])
+  }
+}
+tab1[is.na(tab1)] <- " " 
+# rownames(tab1) <- c("n",vars1.labels)
+```
+
+```{r}
+rownames(tab1) <- c(" ", "n", "Male (vs. Female) (%)", "Age (median [IQR])", "BMI (median [IQR])", "Country (%)", "   America", "   Denmark", "   France", "   Germany", "   Israel","   Netherland", "   Spain", "FCP (median [IQR])", "n ", "Male (vs. Female) (%) ", "Age (median [IQR]) ", "BMI (median [IQR]) ", "Country (%) ", "   America ", "   France ", "   Israel ","   Netherland ", "   Spain ", "FCP (median [IQR]) ", "n  ", "Male (vs. Female) (%)  ", "Age (median [IQR])  ", "BMI (median [IQR])  ", "Country (%)  ", "   America  ", "   France  ", "   Germany  ", "   Israel  ",
+                    "   Netherland  ", "   Spain  ", "FCP (median [IQR])  ")
+
+rows_to_indent <- which(grepl("   ", rownames(tab1)))
+```
+
+
+```{r}
+tab <- kable(tab1, format = "latex", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+  column_spec(c(1,2, 15), border_right = TRUE) %>%
+  row_spec(c(1), bold = T, hline_after = TRUE) %>% 
+  row_spec(c(2,15, 26), bold = T, hline_after = TRUE) %>%
+  pack_rows("Baseline characteristics", which(rownames(tab1) == " "), which(rownames(tab1) == "FCP (median [IQR])  "), extra_latex_after = "\\midrule") %>%
+row_spec(which(rownames(tab1) == "FCP (median [IQR])  "), extra_latex_after = "\\midrule") %>%
+  pack_rows("Health control (non-IBD)", which(rownames(tab1) == "n"), which(rownames(tab1) == "FCP (median [IQR])")) %>%
+  row_spec(which(rownames(tab1) == "FCP (median [IQR])"), extra_latex_after = "\\midrule") %>%
+  pack_rows("Crohn's Disease (CD)", which(rownames(tab1) == "n "), which(rownames(tab1) == "FCP (median [IQR]) ")) %>%
+  row_spec(which(rownames(tab1) == "FCP (median [IQR]) "), extra_latex_after = "\\midrule") %>%
+  pack_rows("Ulcerative Colitis (UC)", which(rownames(tab1) == "n  "), which(rownames(tab1) == "FCP (median [IQR])  ")) %>%
+  add_indent(rows_to_indent, level_of_indent = 2) %>% 
+  footnote(general = c("BMI - Body Mass Index", "FCP - Fecal Calprotectin" ),
+           general_title = "Note: ")
+
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/SampleTable.pdf")
+```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/circle_graph.png", width = 12000, height = 12000, res = 1200)
+disease_counts <- disease_counts[-3,]
+colnames(disease_counts)[colnames(disease_counts) == "HMP2_pilot"] <- "HMP2\nPilot"
+colnames(disease_counts)[colnames(disease_counts) == "EranElinav"] <- "Federici et al.,\n(2022)"
+colnames(disease_counts)[colnames(disease_counts) == "Lewis"] <- "Lewis\n(2015)"
+colnames(disease_counts)[colnames(disease_counts) == "IBD_1000"] <- "1000\nIBD"
+
+sample <- disease_counts[, -c(14)]
+sample <- as.matrix(sample)
+
+# # Color palettes for sectors and links
+# sector_color_palette <- c("IBD_1000"="#001219",
+#                           "EranElinav"="#005f73",
+#                           "HMP1"="#0a9396",
+#                           "HMP2"="#83c5be",
+#                           "HMP3"="#ee9b00",
+#                           "IBDMDB"="#ca6702",
+#                           "HMP2_pilot"="#80B1D3",
+#                           "IBDMDB2"="#bb3e03",
+#                           "Lewis"="#ae2012",
+#                           "MetaHit"="#9b2226",
+#                           "MetaHit2"="#e9d8a6")
+
+link_color_palette <- c("CD"="#ae2012", "UC"="#005f73", "IBD"="#0a9396", "nonIBD"="#e9d8a6")
+
+# Plotting
+circos.par(gap.degree = 4)
+chordDiagram(sample, 
+             directional = F, 
+             annotationTrack = "grap",
+             preAllocateTracks = list(list(track.height = 0.05), list(track.height = 0.05)),
+             grid.col = link_color_palette,
+             link.lwd = 1, 
+             link.lty = 1,    
+             link.border = 1)
+
+# Adjust labels
+circos.trackPlotRegion(track.index = 1, panel.fun = function(x, y) {
+    xlim = get.cell.meta.data("xlim")
+    ylim = get.cell.meta.data("ylim")
+    sector.index = get.cell.meta.data("sector.index")
+    circos.text(mean(xlim), mean(ylim), sector.index, facing = "inside", niceFacing = TRUE, cex = 1, col = "black")  # Color for label is set to black
+}, bg.border = NA)
+
+circos.trackPlotRegion(track.index = 2, panel.fun = function(x, y) {
+  circos.axis("bottom", major.tick.percentage = 0.1, labels.cex = 0.8)
+}, bg.border = NA, bg.col = NA)
+
+circos.clear()
+
+dev.off()
+```
+
+
+```{r}
+colnames(IBD_1000)[colnames(IBD_1000) == "diagnosis_last_record"] <- "Phenotype"
+colnames(Eran_Elinav)[colnames(Eran_Elinav) == "Disease"] <- "Phenotype"
+colnames(HMP1)[colnames(HMP1) == "study design"] <- "Phenotype"
+colnames(HMP2)[colnames(HMP2) == "study design"] <- "Phenotype"
+colnames(HMP2_pilot)[colnames(HMP2_pilot) == "diagnosis"] <- "Phenotype"
+HMP3["study design"] <- "nonIBD"
+colnames(HMP3)[colnames(HMP3) == "study design"] <- "Phenotype"
+colnames(ibdmdb)[colnames(ibdmdb) == "diagnosis"] <- "Phenotype"
+colnames(ibdmdb2)[colnames(ibdmdb2) == "diagnosis"] <- "Phenotype"
+colnames(Lewis)[colnames(Lewis) == "diagnosis"] <- "Phenotype"
+colnames(MetaHit)[colnames(MetaHit) == "diagnosis"] <- "Phenotype"
+colnames(MetaHit2)[colnames(MetaHit2) == "Health Status"] <- "Phenotype"
+colnames(LLDeep)[colnames(LLDeep) == "Study.Group"] <- "Phenotype"
+colnames(PRISM)[colnames(PRISM) == "Study.Group"] <- "Phenotype"
+```
+#########################
+```{r}
+# List of dataframes without the _T suffix
+df_names <- c("IBD_1000", "Eran_Elinav", "HMP1", "HMP2", "HMP2_pilot",
+              "HMP3", "ibdmdb", "ibdmdb2", "Lewis", "MetaHit", "MetaHit2", "LLDeep", "PRISM")
+
+# Loop through each dataframe name and create the 'study' column
+for (df_name in df_names) {
+  assign(df_name, within(get(df_name), study <- df_name))
+  df <- get(df_name)
+  df <- df[, c("index", "Phenotype", "study")]
+  assign(df_name, df)
+}
+dfs <- do.call(rbind, lapply(df_names, get))
+```
+#################################
+
+```{r}
+# Define the count_taxa function to count unique taxa based on a prefix in column names
+count_taxa <- function(df, prefix) {
+  # Filter columns that start with the prefix and have non-zero entries
+  taxa <- colnames(df)[grepl(prefix, colnames(df)) & colSums(df != 0) > 0]
+  # Return the number of unique taxa
+  return(length(unique(taxa)))
+}
+
+# List of dataframes with the _T suffix (assuming these are loaded in your R environment)
+df_Taxa <- c("IBD_1000_T", "Eran_Elinav_T", "HMP1_T", "HMP2_T", "HMP2_pilot_T", 
+              "HMP3_T", "ibdmdb_T", "ibdmdb2_T", "Lewis_T", "MetaHit_T", "MetaHit2_T", "LLDeep_T", "PRISM_T")
+
+# Retrieve the data frames based on their names
+dfs_ <- lapply(df_Taxa, get)
+
+# Initialize empty vectors to collect unique genera and species across all dataframes
+all_genera <- c()
+all_species <- c()
+
+# Initialize a matrix with two rows and columns for each project plus one for 'Overall'
+taxa_counts_matrix <- matrix(nrow = 2, ncol = length(dfs_) + 1)
+rownames(taxa_counts_matrix) <- c("Genus", "Species")
+colnames(taxa_counts_matrix) <- c(sapply(df_Taxa, function(name) gsub("_T$", "", name)), "Overall")
+
+# Initialize an empty list to store all data combined for later use
+all_data_list <- list()
+
+for (i in seq_along(dfs_)) {
+  df <- dfs_[[i]]
+  
+  # Add project identifier as a new column to each dataframe
+  df$Project <- gsub("_T$", "", df_Taxa[i])
+  
+  # Apply threshold to the data: Set values <= 0.1 to 0, and NA to 0 for relevant columns
+  # Assuming that the relevant data columns are all except the last one (Project)
+  df[,1:(ncol(df)-1)][df[,1:(ncol(df)-1)] <= 0] <- 0
+  df[,1:(ncol(df)-1)][is.na(df[,1:(ncol(df)-1)])] <- 0
+  
+  # Count unique genera and species in the current dataframe
+  unique_genera <- unique(colnames(df)[grepl("^g__", colnames(df)) & colSums(df != 0) > 0])
+  unique_species <- unique(colnames(df)[grepl("^s__", colnames(df)) & colSums(df != 0) > 0])
+  
+  # Update the taxa counts matrix with the counts for this dataframe
+  taxa_counts_matrix["Genus", i] <- length(unique_genera)
+  taxa_counts_matrix["Species", i] <- length(unique_species)
+  
+  # Add the unique taxa to the overall list
+  all_genera <- unique(c(all_genera, unique_genera))
+  all_species <- unique(c(all_species, unique_species))
+  
+  # Append the modified dataframe to the list
+  all_data_list[[i]] <- df
+}
+
+# Combine all data into a single dataframe with dplyr::bind_rows, which is more flexible than rbind
+combined_df <- dplyr::bind_rows(all_data_list)
+
+# Count the unique non-zero genera and species for the 'Overall' column
+taxa_counts_matrix["Genus", "Overall"] <- length(all_genera)
+taxa_counts_matrix["Species", "Overall"] <- length(all_species)
+
+
+# Calculate percentages and append to the counts in the matrix
+for (i in seq_along(dfs_)) {
+  genus_count <- as.numeric(taxa_counts_matrix["Genus", i])
+  species_count <- as.numeric(taxa_counts_matrix["Species", i])
+  
+  # Calculate percentages
+  genus_percent <- round((genus_count / as.numeric(taxa_counts_matrix["Genus", "Overall"])) * 100, 2)
+  species_percent <- round((species_count / as.numeric(taxa_counts_matrix["Species", "Overall"])) * 100, 2)
+  
+  # Create strings that include both count and percentage
+  genus_str <- paste(genus_count, sprintf("(%0.2f)", genus_percent))
+  species_str <- paste(species_count, sprintf("(%0.2f)", species_percent))
+  
+  taxa_counts_matrix["Genus", i] <- genus_str
+  taxa_counts_matrix["Species", i] <- species_str
+}
+
+taxa_counts_df <- as.data.frame(taxa_counts_matrix)
+
+df2counts <- combined_df
+df2counts$index <- rownames(df2counts)
+
+rownames(taxa_counts_df) <- c("Genus (n (%))", "Species (n (%))")
+
+new_order <- c("Overall", "Eran_Elinav", "HMP1", "HMP2", "HMP2_pilot", "HMP3", "IBD_1000", "ibdmdb", "ibdmdb2", "Lewis","LLDeep", "MetaHit", "MetaHit2", "PRISM")
+
+taxa_counts_df <- taxa_counts_df[, new_order]
+
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "HMP2_pilot"] <- "HMP2 Pilot"
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "Eran_Elinav"] <- "Federici et al., (2022)"
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "Lewis"] <- "Lewis (2015)"
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "IBD_1000"] <- "1000 IBD"
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "ibdmdb"] <- "IBDMDB"
+colnames(taxa_counts_df)[colnames(taxa_counts_df) == "ibdmdb2"] <- "IBDMDB2"
+print(taxa_counts_df)
+```
+
+# create table 1 for nreads, gbp, n genus, n species each project 
+```{r}
+# paths to the files read stats
+stat_paths_1000_IBD <- c(
+  "/data1/Human/1000_IBD_cohort/1000_IBD_cohort.metagenomics.EGAD00001004194/CD/raw.d/CD.read-stats.txt",
+  "/data1/Human/1000_IBD_cohort/1000_IBD_cohort.metagenomics.EGAD00001004194/UC/raw.d/UC.read-stats.txt",
+  "/data1/Human/1000_IBD_cohort/1000_IBD_cohort.metagenomics.EGAD00001004194/IBDU/raw.d/IBDU.read-stats.txt")
+
+stat_paths_EranElinav <- c("/data2/Human/PRJEB50555/raw.d/PRJEB50555.read-stats.faked.txt")
+
+stat_paths_ibdmdb2 <- c("/data1/Human/ibdmdb2/CD/raw.d/CD.read-stats.txt",
+                        "/data1/Human/ibdmdb2/UC/raw.d/UC.read-stats.txt",
+                        "/data1/Human/ibdmdb2/control/raw.d/control.read-stats.txt")
+
+stat_paths_hmp <- c("/data2/Human/HMP.phase1/Stool/raw.d/Stool.read-stats.txt",
+                    "/data2/Human/HMP.phase2/Stool/raw.d/Stool.read-stats.txt",
+                    "/data2/Human/HMP.phase3/Stool/raw.d/Stool.read-stats.txt")
+                    
+stat_paths_metahit <- c("/data1/Human/MetaHit/raw.d/MetaHit.read-stats.txt")
+
+stat_paths_ibdmdb <- c("/data1/Human/ibdmdb/CD/raw.d/CD.read-stats.txt", 
+                       "/data1/Human/ibdmdb/UC/raw.d/UC.read-stats.txt", 
+                       "/data1/Human/ibdmdb/control/raw.d/control.read-stats.txt")
+                      
+
+stat_paths_hmp2_pilot <- c("/data2/Human/HMP2_Pilot/raw.d/HMP2_Pilot.read-stats.txt")
+
+stat_paths_metahit2 <- c("/data1/Human/PRJEB1220/metaphlan4.0.6/PRJEB1220.read-stats.txt")
+
+stat_paths_lewis <- c("/data1/Human/SRP057027/raw.d/SRP057027.read-stats.txt")
+
+stat_paths_LLDeep <- c("~/metaanalysis/datasets/multi-cohort_dataset/LLDeep_PRIZM/LLDeep/raw.d/LLDeep.read-stats.txt")
+
+stat_paths_PRISM <- c("~/metaanalysis/datasets/multi-cohort_dataset/LLDeep_PRIZM/PRISM/raw.d/PRISM.read-stats.txt")
+
+# Function to read and process each file
+read_and_process <- function(path) {
+  data <- read.delim(path, header = FALSE, sep = "\t", quote = "\"", stringsAsFactors = FALSE)
+  data <- data[-1,]  
+  colnames(data) <- as.character(unlist(data[1,]))  
+  data <- data[-1,]  
+  return(data)
+}
+
+rs_IBD1000 <- bind_rows(lapply(stat_paths_1000_IBD, read_and_process))
+rs_EranElinav <- bind_rows(lapply(stat_paths_EranElinav, read_and_process))
+rs_ibdmdb <- bind_rows(lapply(stat_paths_ibdmdb, read_and_process))
+rs_ibdmdb2 <- bind_rows(lapply(stat_paths_ibdmdb2, read_and_process))
+rs_hmp <- bind_rows(lapply(stat_paths_hmp, read_and_process))
+rs_hmp2_pilot <- bind_rows(lapply(stat_paths_hmp2_pilot, read_and_process))
+rs_metahit <- bind_rows(lapply(stat_paths_metahit, read_and_process))
+rs_metahit2 <- bind_rows(lapply(stat_paths_metahit2, read_and_process))
+rs_lewis <- bind_rows(lapply(stat_paths_lewis, read_and_process))
+rs_LLDeep <- bind_rows(lapply(stat_paths_LLDeep, read_and_process))
+rs_PRISM <- bind_rows(lapply(stat_paths_PRISM, read_and_process))
+
+read_stat_all <- bind_rows(rs_EranElinav,rs_hmp,rs_metahit,rs_ibdmdb2,rs_IBD1000,rs_lewis, rs_ibdmdb, rs_hmp2_pilot, rs_metahit2, rs_LLDeep, rs_PRISM)
+read_stat_all <- read_stat_all[c("# Sample", "Nreads1", "Nbps1")]
+```
+
+```{r}
+# Merge the data frames
+consolidated_df_v3 <- merge(read_stat_all, consolidated_df_v2, by.x = "# Sample", by.y = "Sample_ID")
+
+df2counts[is.na(df2counts)] <- 0
+
+# Apply multiple thresholds
+thresholds <- c(0, 0.001, 0.01, 0.1, 1)
+
+# Initialize a list to store the thresholded dataframes
+thresholded_dfs <- list() #inclunded only binary taxa
+
+# Initialize a list to store the merged dataframes
+merged_dfs <- list() # include with metadata
+
+for (thresh in thresholds) {
+    # Apply threshold
+    temp_df <- df2counts
+    temp_df[temp_df <= thresh] <- 0
+    temp_df[temp_df > thresh] <- 1
+
+    # Keeping only columns with non-zero values
+    temp_df <- as.data.frame(temp_df[, apply(temp_df, 2, function(col) any(col != 0))])
+    temp_df$index <- rownames(temp_df)
+
+    thresholded_dfs[[paste0("threshold_", thresh)]] <- temp_df
+
+    merged_temp_df <- merge(consolidated_df_v3, temp_df, by.x = "# Sample", by.y = "index")
+
+    # Calculate genus and species indices for the merged dataframe
+    k_index <- which(grepl("^k__", names(merged_temp_df)))
+    p_index <- which(grepl("^p__", names(merged_temp_df)))
+    c_index <- which(grepl("^c__", names(merged_temp_df)))
+    o_index <- which(grepl("^o__", names(merged_temp_df)))
+    f_index <- which(grepl("^f__", names(merged_temp_df)))
+    g_index <- which(grepl("^g__", names(merged_temp_df)))
+    s_index <- which(grepl("^s__", names(merged_temp_df)))
+    
+    # Sum for taxa
+    merged_temp_df$Kingdom <- rowSums(merged_temp_df[, k_index, drop = FALSE])
+    merged_temp_df$Phylum <- rowSums(merged_temp_df[, p_index, drop = FALSE])
+    merged_temp_df$Class <- rowSums(merged_temp_df[, c_index, drop = FALSE])
+    merged_temp_df$Order <- rowSums(merged_temp_df[, o_index, drop = FALSE])
+    merged_temp_df$Family <- rowSums(merged_temp_df[, f_index, drop = FALSE])
+    merged_temp_df$Genus <- rowSums(merged_temp_df[, g_index, drop = FALSE])
+    merged_temp_df$Species <- rowSums(merged_temp_df[, s_index, drop = FALSE])
+    
+    merged_dfs[[paste0("consolidated_df_v4_threshold_", thresh)]] <- merged_temp_df
+
+    # Print dimensions of dataframe
+    print(paste("Dimensions by thresholded df taxas", thresh, ":", dim(temp_df)))
+}
+
+all_transformed_dfs <- list()
+
+# Loop over each dataframe in merged_dfs
+for (thresh_name in names(merged_dfs)) {
+    # Extract the dataframe
+    df <- merged_dfs[[thresh_name]]
+
+    # Select relevant columns and convert Nreads1 and Nbps1
+    df_selected <- df[c("# Sample","Disease", "Source", "Nreads1", "Nbps1"
+                      , "Kingdom","Phylum", "Class", "Order", "Family", "Genus","Species")]
+    df_selected <- transform(df_selected,
+                             Nreads1 = as.numeric(as.character(Nreads1))/1e6,
+                             Nbps1 = as.numeric(as.character(Nbps1)) / 1e9 * 2)
+
+    # Add the transformed dataframe to the list
+    all_transformed_dfs[[thresh_name]] <- df_selected
+}
+```
+
+```{r}
+vars <- c("Nreads1", "Nbps1")
+# nonvars <- lapply(vars, function(v) shapiro.test(all_transformed_dfs$consolidated_df_v4_threshold_0[[v]]))
+table1 <- print(CreateTableOne(vars = vars, 
+                         strata = c("Source"),
+                         data = all_transformed_dfs$consolidated_df_v4_threshold_0[all_transformed_dfs$consolidated_df_v4_threshold_0$Disease == "nonIBD", ], 
+                         addOverall = T,
+                         test = F),nonnormal = vars, missing = F)
+
+table2 <- print(CreateTableOne(vars = vars, 
+                         strata = c("Source"),
+                         data = all_transformed_dfs$consolidated_df_v4_threshold_0[all_transformed_dfs$consolidated_df_v4_threshold_0$Disease == "CD", ], 
+                         addOverall = T,
+                         test = F), nonnormal = vars, missing = F)
+table3 <- print(CreateTableOne(vars = vars, 
+                         strata = c("Source"),
+                         data = all_transformed_dfs$consolidated_df_v4_threshold_0[all_transformed_dfs$consolidated_df_v4_threshold_0$Disease == "UC", ], 
+                         addOverall = T,
+                         test = F),nonnormal = vars, missing = F)
+df_table1 <- as.data.frame(table1)
+df_table2 <- as.data.frame(table2)
+df_table3 <- as.data.frame(table3)
+
+table1 <- bind_rows(df_table1, df_table2, df_table3)
+
+colnames(table1)[colnames(table1) == "HMP2_pilot"] <- "HMP2 Pilot"
+colnames(table1)[colnames(table1) == "Eran_Elinav"] <- "Federici et al., (2022)"
+colnames(table1)[colnames(table1) == "Lewis"] <- "Lewis (2015)"
+colnames(table1)[colnames(table1) == "IBD_1000"] <- "1000 IBD"
+
+rows_to_indent <- which(grepl("   ", rownames(table1)))
+rownames(table1) <- c("n", "Nreads (M) (median [IQR])", "Gbp (median [IQR])", "n ", "Nreads (M) (median [IQR]) ", "Gbp (median [IQR]) ","n  ", "Nreads (M) (median [IQR])  ", "Gbp (median [IQR])  ")
+
+
+table1[is.na(table1)] <- " "
+```
+
+```{r}
+# kable(table1, format = "html") %>%
+#     kable_styling(bootstrap_options = "striped",
+#                 full_width = T)
+tab_gbp <- kable(table1, booktabs = T, format = "latex") %>%
+  column_spec(c(1,2), border_right = TRUE) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+  pack_rows("Baseline Genome Size", which(rownames(table1) == "n"), which(rownames(table1) == "Gbp (median [IQR])  "), extra_latex_after = "\\midrule") %>%
+  row_spec(which(rownames(table1) == "Gbp (median [IQR])  "), extra_latex_after = "\\midrule") %>%
+  pack_rows("non-IBD", which(rownames(table1) == "n"), which(rownames(table1) == "Gbp (median [IQR])")) %>%
+  row_spec(which(rownames(table1) == "Gbp (median [IQR])"), extra_latex_after = "\\midrule") %>%
+  pack_rows("CD", which(rownames(table1) == "n "), which(rownames(table1) == "Gbp (median [IQR]) ")) %>%
+  row_spec(which(rownames(table1) == "Gbp (median [IQR]) "), extra_latex_after = "\\midrule") %>%
+  pack_rows("UC", which(rownames(table1) == "n  "), which(rownames(table1) == "Gbp (median [IQR])  ")) %>%
+  footnote(general = c("Nreads (M) - number of reads (Million)", "Gbp - Giga base pairs"),
+           general_title = "Note: ")
+
+#     column_spec(c(2,3,14), border_right = T) %>%
+#  #  add_header_above(c("", "", "Discharge BB"=3, "")) %>%
+
+#  #  %>%
+
+save_kable(tab_gbp, file = "~/metaanalysis/datasets/Controls/Summray_gpb.pdf")
+```
+
+```{r}
+threshold_values <- c("0", "0.001", "0.01", "0.1", "1")
+all_thresh <- list()
+
+for (thresh in threshold_values) {
+    df_name <- paste("consolidated_df_v4_threshold", thresh, sep = "_")
+    all_transformed_dfs[[df_name]]$thresh <- thresh
+    all_thresh[[thresh]] <- all_transformed_dfs[[df_name]]
+}
+
+all_thresh <- do.call(rbind, all_thresh)
+```
+
+```{r}
+vars <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+table1 <- print(CreateTableOne(vars = vars, 
+                         strata = c("thresh"),
+                         data = all_thresh, 
+                         addOverall = F,
+                         test = F), missing = F)
+
+TaxonomicRank <- as.data.frame(table1[-1,], stringsAsFactors = T)
+row.names(TaxonomicRank) <- vars
+
+# Transform data into long format
+long_data <- TaxonomicRank %>%
+  rownames_to_column("TaxonomicRank") %>%
+  pivot_longer(cols = -TaxonomicRank, names_to = "Concentration", values_to = "Mean_SD") %>%
+  separate(Mean_SD, into = c("Mean", "SD"), sep = " \\(") %>%
+  mutate(
+    Mean = as.numeric(Mean),
+    SD = as.numeric(sub("\\)", "", SD)),
+    TaxonomicRank = factor(TaxonomicRank, levels = vars)
+  )
+
+```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/Controls/TaxonomicRank.png", width = 12000, height = 6000, res = 1200)
+
+cololr <- c("#005f73","#0a9396","#80B1D3","#e9d8a6", "#ae2012")
+
+ggplot(long_data, aes(x = TaxonomicRank, y = Mean, group = Concentration, color = Concentration)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = cololr) +  # This line sets the color scheme
+  theme_minimal() +
+  labs(
+       x = " ",
+       y = "Number of Taxa (Mean)",
+       color = "Threshold")
+dev.off()
+```
+
+
+### Core Microbiome
+```{r}
+read_stat <- merge(consolidated_df_v3, read_stat_all , by.x = "# Sample", by.y = "# Sample")
+count4sample <- combined_df
+count4sample[count4sample > 0] <- 1
+count4sample$index <- rownames(count4sample)
+count4sample <- merge(read_stat, count4sample , by.x = "# Sample", by.y = "index")
+
+count4sample$Source[count4sample$Source == "HMP2_pilot"] <- "HMP2 Pilot"
+count4sample$Source[count4sample$Source == "Eran_Elinav"] <- "Federici et al., (2022)"
+count4sample$Source[count4sample$Source == "Lewis"] <- "Lewis (2015)"
+count4sample$Source[count4sample$Source == "IBD_1000"] <- "1000 IBD"
+
+###  do subset per phenotype 
+count4sample <- subset(count4sample, Disease == "nonIBD")
+
+genera_and_species_columns <- grep("^s__", colnames(count4sample), value = TRUE)
+
+# Calculate the total number of rows for each project before any transformation
+rows_per_project <- count4sample %>%
+  group_by(Source) %>%
+  summarize(Rows_Per_Project = n(), .groups = 'drop')
+
+# Function to calculate the counts and percentages
+calculate_counts_and_percents <- function(data, group_column_name, target_columns, rows_info) {
+  data %>%
+    select(all_of(group_column_name), all_of(target_columns)) %>%
+    pivot_longer(cols = all_of(target_columns), names_to = "Taxon", values_to = "Count") %>%
+    group_by(!!sym(group_column_name), Taxon) %>%
+    summarize(Total_Count = sum(Count, na.rm = TRUE), .groups = 'drop') %>%
+    filter(Total_Count > 0) %>%
+    left_join(rows_info, by = group_column_name) %>%
+    mutate(Percentage = (Total_Count / Rows_Per_Project) * 100) %>%
+    select(-Rows_Per_Project)  # Remove the Rows_Per_Project column if you don't want to keep it
+}
+
+# Apply the function to the data frame
+results <- calculate_counts_and_percents(count4sample, "Source", genera_and_species_columns, rows_per_project)
+
+# Split the results into separate tables for each project
+project_tables <- split(results, results$Source)
+
+
+# Sort each project table by percentage in order
+project_tables_sorted <- lapply(project_tables, function(tbl) {
+  tbl_sorted <- tbl %>% 
+    arrange(desc(Percentage))
+    
+  # Add a column with the count of duplicated Percentage within each Source
+  tbl_sorted <- tbl_sorted %>%
+    add_count(Percentage, name = "N_species")
+  
+  return(tbl_sorted)
+})
+```
+
+```{r}
+# Find the maximum number of rows in any of the project tables
+max_rows <- max(sapply(project_tables_sorted, nrow))
+
+# Initialize the data frames with the maximum number of rows
+df_N_species <- data.frame(matrix(ncol = length(project_tables_sorted), nrow = max_rows))
+df_Percentage <- data.frame(matrix(ncol = length(project_tables_sorted), nrow = max_rows))
+
+# Give the columns appropriate names based on the project names
+names(df_N_species) <- names(project_tables_sorted)
+names(df_Percentage) <- names(project_tables_sorted)
+
+# Fill the data frames with the N_species and Percentage values from each project
+for(project_name in names(project_tables_sorted)) {
+  # Extract the N_species and Percentage columns
+  current_N_species <- project_tables_sorted[[project_name]]$N_species
+  current_Percentage <- project_tables_sorted[[project_name]]$Percentage
+
+  # Assign the values to the appropriate columns in the data frames
+  # If there are fewer rows than max_rows, the remaining entries will be NA
+  df_N_species[1:length(current_N_species), project_name] <- current_N_species
+  df_Percentage[1:length(current_Percentage), project_name] <- current_Percentage
+}
+```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/Controls/Core_microbiom.png", width = 12000, height = 8000, res = 1200)
+# Reshape the data to long format
+df_long <- df_Percentage %>% 
+  pivot_longer(cols = everything(), names_to = "Project", values_to = "Percentage")
+
+df_long_S <- df_N_species %>% 
+  pivot_longer(cols = everything(), names_to = "Project", values_to = "N_species")
+
+# Define the color palette for the sectors
+sector_color_palette <- c("Federici et al., (2022)"="#001219", 
+                          "HMP1"="#0b9497",             
+                          "HMP2"="#84c6bf",             
+                          "HMP3"="#006074",             
+                          "IBDMDB"="#346d64",          
+                          "HMP2 Pilot"="#81B2D4",       
+                          "IBDMDB2"="#39a4a6",          
+                          "Lewis (2015)"="#84c9df",     
+                          "MetaHit"="#9c2327",         
+                          "MetaHit2"="#ead9a7",        
+                          "LLDeep"="#cb6803",          
+                          "PRISM"="#bc3f04",
+                          "1000 IBD"="#b02113") 
+
+# Create the ridgeline plot using the custom color palette
+ggplot(df_long, aes(x = Percentage, y = Project, fill = Project)) +
+  geom_density_ridges(scale = 10, size = 0.3) +
+  scale_fill_manual(values = sector_color_palette) +
+  labs(x = "Percentage (%)", y= " ") +
+  xlim(c(-8,100)) +
+  theme_ridges() +
+  theme(legend.position = "none",  axis.title.x = element_text(hjust = 0.5)  # Center the x-axis title
+  )
+
+dev.off()
+
+# # Create the ridgeline plot using the custom color palette
+# ggplot(df_long_S, aes(x = N_species, y = Project, fill = Project)) +
+#   geom_density_ridges(scale = 10, size = 0.3, rel_min_height = 0.01) +
+#   scale_fill_manual(values = sector_color_palette) +
+#   labs(x = "Number of species", y= " ") +
+#   xlim(c(-100,500)) +
+#   theme_ridges() +
+#   theme(legend.position = "none")
+```
+
+### PCOA Analysis
+```{r}
+Fig1b_input <-  t(combined_df)
+#filter rows where any column has a string that starts with "s__" to keep only species
+Fig1b_input <- Fig1b_input[grepl("^s__", rownames(Fig1b_input)), ] 
+
+Fig1b_classified <- Fig1b_input[-grep('unclassified', row.names(Fig1b_input)),] # unclassified species removed
+
+write.csv(Fig1b_classified, "~/metaanalysis/datasets/ITAI/ITAI_DS_COURSE_s.csv")
+
+Fig1b_classified[Fig1b_classified <= 0.1] <- 0 # threshold of being present for species
+# Fig1b_classified[Fig1b_classified > 0] <- 1
+Fig1b_classified[is.na(Fig1b_classified)] <- 0
+Fig1b_classified <- as.data.frame(t(Fig1b_classified[, apply(Fig1b_classified, 2, function(col) any(col != 0))]))
+
+Fig1b_classified$RowName <- rownames(Fig1b_classified)
+
+Fig1c_d_dataset <- merge(consolidated_df_v2, Fig1b_classified, by.x = "Sample_ID", by.y = "RowName", all = TRUE)
+write.csv(Fig1c_d_dataset, "~/metaanalysis/datasets/ITAI/METADATA_ITAI_DS_COURSE_ttt.csv")
+
+Fig1c_d_dataset$RowName <- NULL
+
+Fig1c_d_dataset <- Fig1c_d_dataset %>% filter(!is.na(Disease))
+
+Fig1c_d_dataset$rowname <- paste(Fig1c_d_dataset$Source, ".v.", Fig1c_d_dataset$Sample_ID, sep = "")
+rownames(Fig1c_d_dataset) <- Fig1c_d_dataset$rowname
+
+# Convert the columns (excluding the first three) to numeric
+Fig1c_d_dataset[, -c(1:11)] <- lapply(Fig1c_d_dataset[, -c(1:11)], function(x) as.numeric(as.character(x)))
+#Fig1c_d_dataset <- subset(Fig1c_d_dataset, Disease != "IBD")
+
+Fig1c_d_dataset <- subset(Fig1c_d_dataset, Disease == "nonIBD")
+
+table(Fig1c_d_dataset$Disease)
+write.csv(Fig1c_d_dataset, "~/metaanalysis/datasets/all_cohorts.csv")
+```
+
+```{r}
+trs <- function(x) asin(sqrt(x*0.01))
+
+permanova1 <- Fig1c_d_dataset %>% mutate_each(funs(trs), colnames(Fig1c_d_dataset[,-c(1:11)]))
+
+permanova1[, 12:ncol(permanova1)][is.na(permanova1[, 12:ncol(permanova1)])] <- 0
+empty_rows <- which(rowSums(permanova1[, c(12:ncol(permanova1))], na.rm=TRUE) == 0) 
+permanova1 <- permanova1[-empty_rows, ]
+
+# Compute Bray-Curtis distances
+BC.dist = vegdist(permanova1[,c(12:ncol(permanova1))], method = 'bray')
+
+
+# Compute Principal Coordinates Analysis
+pcoa_all = dudi.pco(BC.dist, scannf=FALSE, nf=3)
+
+# Extract variance explained by axes
+evals = eigenvals(pcoa_all)
+Variance = evals / sum(evals)
+Variance1 = 100 * signif(Variance[1], 2)
+Variance2 = 100 * signif(Variance[2], 2)
+Variance3 = 100 * signif(Variance[3], 2)
+
+# Prepare data for plotting
+pc_plot_data = data.frame(pcoa_all$li$A1, pcoa_all$li$A2, permanova1$Disease,
+                           permanova1$Sample_ID,permanova1$Source, permanova1$Country, permanova1$Sex, permanova1$Age, permanova1$BMI, permanova1$FCP)
+colnames(pc_plot_data) = c("x","y","Phenotype","Sample_ID", "Source", "Nationally", "Sex", "Age", "BMI", "FCP")
+
+pc_plot_data$Obesity <- ifelse(pc_plot_data$BMI >= 30, "Obesity", "non-Obesity")
+pc_plot_data$Age_group <- ifelse(pc_plot_data$Age >=18, "Adult", "Young")
+pc_plot_data$Sex <- ifelse(pc_plot_data$Sex == 0, "Unknown", pc_plot_data$Sex)
+
+pc_plot_data <- pc_plot_data %>%filter(!Nationally %in% c("Israel"))
+pc_plot_data$Country_group <- ifelse(pc_plot_data$Nationally == "America", "America", "Europe")
+
+# Merge with mean values
+pc_plot_data1 = merge(pc_plot_data, aggregate(cbind(mean.x=x,mean.y=y) ~ Phenotype,
+                                              pc_plot_data, mean), by="Phenotype")
+
+pc_plot_data1$Source[pc_plot_data1$Source == "HMP2_pilot"] <- "HMP2 Pilot"
+pc_plot_data1$Source[pc_plot_data1$Source == "Eran_Elinav"] <- "Federici et al., (2022)"
+pc_plot_data1$Source[pc_plot_data1$Source == "Lewis"] <- "Lewis (2015)"
+pc_plot_data1$Source[pc_plot_data1$Source == "IBD_1000"] <- "1000 IBD"
+
+
+#Drop IBD pheno type n = 23 
+pc_plot_data1 <- subset(pc_plot_data1, Phenotype == "nonIBD")
+
+# arrow by Nationally
+country_median <- aggregate(cbind(x, y) ~ Nationally, data = pc_plot_data1, FUN = function(x) median(x))
+country_median[, -1] <- round(country_median[, -1], 2)
+
+# arrow by phenotype
+pheno_median <- aggregate(cbind(x, y) ~ Phenotype, data = pc_plot_data1, FUN = function(x) median(x))
+pheno_median[, -1] <- round(pheno_median[, -1], 2)
+
+# arrow by sex
+sex_median <- aggregate(cbind(x, y) ~ Sex, data = pc_plot_data1, FUN = function(x) median(x))
+sex_median[, -1] <- round(sex_median[, -1], 2)
+
+# arrow by age
+Age_median <- aggregate(cbind(x, y) ~ Age_group, data = pc_plot_data1, FUN = function(x) median(x))
+Age_median[, -1] <- round(Age_median[, -1], 2)
+
+# arrow by age
+obesity_median <- aggregate(cbind(x, y) ~ Obesity, data = pc_plot_data1, FUN = function(x) median(x))
+obesity_median[, -1] <- round(obesity_median[, -1], 2)
+
+all_demo <- pc_plot_data1 %>%
+  gather(key = "Category", value = "Level", Nationally, Sex, Age_group, Obesity) %>%
+  group_by(Category, Level) %>%
+  summarise(x = median(x), y= median(y), .groups = "drop") %>%
+  filter(!is.na(Level))%>%
+  group_by(Category) %>%
+  summarise(x = median(x), y = median(y), .groups = "drop")%>%
+  mutate(Category = ifelse(Category == "Age_group", "Age", Category), 
+         x = x * 10, 
+         y = y * 10) 
+
+```
+
+# This section is to identify the cluster manually by genus levels for nonIBD.
+
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/RF_CLUSRET.png", width = 12000, height = 8000, res = 1200)
+
+cluster_manually <- subset(pc_plot_data1, Phenotype == "nonIBD")
+cluster_manually <- cluster_manually %>%
+  mutate(cluster = case_when(
+    (x > -0.5 & x < -0.1) & (y > 0 & y < 0.6) ~ "1",  
+    (x > -0.2 & x < 0.1) & (y > -0.35 & y < 0) ~ "2",
+    (x > 0.1 & x < 0.65) & (y > -0.1 & y < 0.25) ~ "3", 
+    (x > 0 & x < 0.3) & (y > 0.25 & y < 0.7) ~ "4",      
+    TRUE ~ "5"                                          
+  ))
+
+cluster_manually$cluster <- factor(cluster_manually$cluster, levels = c("1", "2", "3", "4"))
+levels(cluster_manually$cluster) <- paste0("Cluster_", levels(cluster_manually$cluster))
+
+ggplot(cluster_manually, aes(x = x, y = y, color = cluster)) +
+  geom_point(size = 2) +  
+  geom_point(aes(x = mean.x, y = mean.y), size = 0) +
+  stat_ellipse(level = 0.95) +
+  theme_bw() +  
+  ylim(-0.8, 0.8) + 
+  xlim(-0.8, 0.8) + 
+  labs(x = "PCoA1 (8.9%)", y = "PCoA2 (6.3%)", title = " ", color = " ") +
+  scale_colour_manual(values = c("#e9d8a6", "#006074", "#ae2012", "#0b9497")) +  #
+  theme(legend.title = element_blank()) +  
+  geom_label(aes(label = cluster), 
+             data = cluster_manually %>% group_by(cluster) %>% summarise(x = mean(x), y = mean(y)),
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)  
+#write.csv(cluster_manually, "~/metaanalysis/datasets/Controls/cluster_manually_s.csv")
+dev.off()
+
+```
+
+```{r}
+set.seed(888)
+pcoa_all2rf <- cluster_manually
+# Optionally, you can uncomment the next line to exclude cluster "4"
+# pcoa_all2rf <- subset(cluster_manually, cluster != "4")
+pcoa_all2rf <- merge(pcoa_all2rf, Fig1c_d_dataset, by= "Sample_ID")
+#write.csv(pcoa_all2rf, "~/metaanalysis/datasets/Controls/shap_rf_s.csv")
+table(pcoa_all2rf$cluster)
+
+
+# Split the data
+trainingRows <- createDataPartition(y=pcoa_all2rf$cluster, p = 0.7, list = FALSE)
+trainData <- pcoa_all2rf[trainingRows, ]
+testData <- pcoa_all2rf[-trainingRows, ]
+
+total_counts <- pcoa_all2rf %>%
+  group_by(cluster) %>%
+  summarise(total_count = n())
+
+testData %>%
+  group_by(cluster) %>%
+  summarise(test_count = n()) %>%
+  left_join(total_counts, by = "cluster") %>%
+  mutate(percentage = round((test_count / total_count) * 100, 2))
+
+tuneGrid <- expand.grid(.mtry = c(2, 4, 8, 16, 32)) 
+
+trainControl <- trainControl(method = "cv", number = 5,
+                             savePredictions = "final", classProbs = TRUE,
+                             summaryFunction = defaultSummary) ##########
+
+trainData$cluster <- factor(trainData$cluster, levels = c("Cluster_1", "Cluster_2", "Cluster_3", "Cluster_4"))
+
+testData$cluster <- factor(testData$cluster, levels = c("Cluster_1", "Cluster_2", "Cluster_3", "Cluster_4"))
+
+genus_rf <- grep("^g__", names(trainData), value = TRUE)
+genus_rf_data <- trainData[, c(genus_rf, 'cluster')]
+
+n_trees <- c(100, 200)
+models <- list()
+model_acc <- numeric(length(n_trees))
+
+trainControl <- trainControl(
+  method = "cv",
+  number = 5,  # 5-fold cross-validation
+  verboseIter = TRUE
+)
+
+tuneGrid <- expand.grid(
+  .mtry = c(sqrt(ncol(genus_rf_data) - 1), log2(ncol(genus_rf_data) - 1))
+)
+
+# Loop through different numbers of trees
+for (i in seq_along(n_trees)) {
+  rf_model <- train(
+    cluster ~ ., 
+    data = genus_rf_data, 
+    method = "rf",
+    trControl = trainControl,
+    tuneGrid = tuneGrid,
+    ntree = n_trees[i], 
+    metric = "Accuracy"
+  )
+  
+  models[[paste0("rf_ntree_", n_trees[i])]] <- rf_model
+  model_acc[i] <- max(rf_model$results$Accuracy)
+}
+
+print(model_acc)
+
+best_model_index <- which.max(model_acc)
+best_model <- models[[best_model_index]]
+
+predictions <- predict(best_model, newdata = testData)
+
+confusionMatrix_rf <- confusionMatrix(predictions, testData$cluster)
+
+ggplot(trainData, aes(x = x, y = y, color = cluster)) +   # 
+  geom_point(alpha = 0.7) +
+  theme_minimal() +
+  ylim(-0.6, 0.6) + 
+  xlim(-0.5, 0.5) + 
+  labs(x = "PCoA1 (8.9%)", y = "PCoA2 (6.3%)", title = " ", color = " ") +
+  scale_colour_manual(values=c("#e9d8a6","#81B2D4", "#ae2012", "#0b9497"))
+
+plt <- as.data.frame(confusionMatrix_rf$table)
+plt$Prediction <- factor(plt$Prediction, levels = rev(levels(plt$Prediction)))
+#plt$Reference <- factor(plt$Reference, levels = rev(levels(plt$Reference)))
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/confusionMatrix_rf.png", width = 12000, height = 8000, res = 1200)
+ggplot(plt, aes(Reference, Prediction, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="#e9d8a6", high="#ae2012") +
+        labs(x = "Reference",y = "Prediction") +
+        scale_x_discrete(labels=c("Cluster_1","Cluster_2","Cluster_3","Cluster_4")) +
+        scale_y_discrete(labels=c("Cluster_4","Cluster_3","Cluster_2","Cluster_1"))
+dev.off()
+```
+
+```{r}
+tab_RF <- confusionMatrix_rf$byClass
+tab_RF <- round(tab_RF, 3)
+for (col in names(tab_RF)) {
+  if (is.character(tab_RF[[col]])) {
+    tab_RF[[col]] <- gsub(".*\\b(NA|NaN|0\\.0)\\b.*", " ", tab_RF[[col]])
+  }
+}
+tab_RF[is.na(tab_RF)] <- " " 
+rownames(tab_RF) <- c("Cluster_1","Cluster_2","Cluster_3","Cluster_4")
+tab <- kable(tab_RF, format = "latex", booktabs = TRUE) %>% 
+  kable_styling(latex_options = c("striped", "scale_down")) %>% 
+  # pack_rows("Baseline characteristics", which(rownames(tab00) == "n"), which(rownames(tab00) == "FCP (median [IQR])"), extra_latex_after = "\\midrule") %>%
+  # row_spec(which(rownames(tab00) == "FCP (median [IQR])"), extra_latex_after = "\\midrule") %>% 
+  # pack_rows("Species level", which(rownames(beta_summray) == "Jaccard (Similarity) "), which(rownames(beta_summray) == "Bray-Curtis (Dissimilarity) "), extra_latex_after = "\\midrule") %>% row_spec(which(rownames(beta_summray) == "Bray-Curtis (Dissimilarity) "), extra_latex_after = "\\midrule") %>% 
+row_spec(c(0), bold = T, hline_after = TRUE) %>% 
+column_spec(c(1), border_right = TRUE)
+
+
+  
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/confusionMatrix_rf.pdf")
+```
+
+```{r}
+var_importance <- varImp(rf_model, scale = FALSE)
+importance_df <- as.data.frame(var_importance$importance)
+importance_df$genus <- rownames(importance_df)
+importance_df_sorted <- importance_df[order(-importance_df$Overall),]
+rownames(importance_df_sorted) <- NULL
+#write.csv(pcoa_all2rf, "~/metaanalysis/datasets/Controls/shap_rf.csv")
+```
+
+```{r}
+table(pcoa_all2rf$cluster, pcoa_all2rf$Nationally)
+table(pcoa_all2rf$cluster, pcoa_all2rf$Age_group)
+table(pcoa_all2rf$cluster, pcoa_all2rf$Sex.x)
+table(pcoa_all2rf$cluster, pcoa_all2rf$Obesity)
+table(pcoa_all2rf$cluster, pcoa_all2rf$Country_group)
+
+vars <- c("Sex.x", "Age.x","BMI.x","Country_group","FCP.x")
+tab00 <- print(CreateTableOne(vars = vars,
+                             strata = "cluster", 
+                             data = pcoa_all2rf, addOverall = T, test = T, factorVars = vars[!vars %in% c("Age.x", "BMI.x", "FCP.x")]
+                             ),showAllLevels = TRUE, nonnormal = c("Age.x", "BMI.x", "FCP.x"))[,-c(8)]
+
+colnames(tab00)[colnames(tab00) == "level"] <- " "
+colnames(tab00)[colnames(tab00) == "p"] <- " P val"
+
+
+rows_to_indent <- which(grepl("   ", rownames(tab00)))
+
+tab00 <- as.data.frame(tab00)
+
+for (col in names(tab00)) {
+  if (is.character(tab00[[col]])) {
+    tab00[[col]] <- gsub(".*\\b(NA|NaN|0\\.0)\\b.*", " ", tab00[[col]])
+  }
+}
+tab00[is.na(tab00)] <- " " 
+rownames(tab00) <- c("n", "Sex (%)", "", "Age (median [IQR])", "BMI (median [IQR])", "Continental (%)", " ", "FCP (median [IQR])")
+
+```
+
+```{r}
+ tab <- kable(tab00, format = "latex", booktabs = TRUE) %>% 
+  kable_styling(latex_options = c("striped", "scale_down")) %>% 
+  pack_rows("Baseline characteristics", which(rownames(tab00) == "n"), which(rownames(tab00) == "FCP (median [IQR])"), extra_latex_after = "\\midrule") %>%
+  row_spec(which(rownames(tab00) == "FCP (median [IQR])"), extra_latex_after = "\\midrule") %>% 
+  # pack_rows("Species level", which(rownames(beta_summray) == "Jaccard (Similarity) "), which(rownames(beta_summray) == "Bray-Curtis (Dissimilarity) "), extra_latex_after = "\\midrule") %>% row_spec(which(rownames(beta_summray) == "Bray-Curtis (Dissimilarity) "), extra_latex_after = "\\midrule") %>% 
+row_spec(c(1), bold = T, hline_after = TRUE) %>% 
+column_spec(c(2,3,7), border_right = TRUE)
+
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/RF_summray.pdf")
+```
+# This line plot is exeplin tthe varince of PCoA1 
+```{r}
+ggplot(pc_plot_data1, aes(x = x, color = Nationally, group = Nationally)) +
+  geom_freqpoly(binwidth = 0.02, size = 0.5) +
+  #scale_color_manual(values=c("#e9d8a6", "#006074", "#ae2012")) +
+  scale_colour_manual(values=c("#e9d8a6","#81B2D4", "#ae2012", "#0b9497", "#cb6803","#006074","#84c9df")) +
+
+  labs(color = "") + xlab("PCoA1") + ylab("Freq")
+```
+
+# Explain 50% variences
+```{r}
+pcoa_all2cluster = dudi.pco(BC.dist, scannf=FALSE)
+
+evals = eigenvals(pcoa_all2cluster)
+total_variance = sum(evals)
+variance_explained = evals / total_variance
+cumulative_variance_explained = cumsum(variance_explained) * 100
+
+num_axes_needed = which(cumulative_variance_explained >= 50)[1]
+print(num_axes_needed)
+pcoa_all2cluster = pcoa_all2cluster$tab[, 1:num_axes_needed] 
+pcoa2db <- pcoa_all2cluster
+rownames(pcoa2db) <- sapply(strsplit(rownames(pcoa2db), "\\.v\\."), function(x) x[[2]])
+pcoa2db$Sample_ID <- rownames(pcoa2db)
+```
+
+
+```{r}
+#png(filename = "~/metaanalysis/datasets/Controls/DB_cluster_g.png", width = 12000, height = 8000, res = 1200)
+
+set.seed(888)
+# Assuming pcoa_all2cluster$li contains your PCoA results
+# You might need to adjust eps and minPts based on your data
+dbscan_result <- dbscan(pco2rf, eps = 0.38, minPts = 30) 
+
+DB_Cluster <- merge(pcoa2db, Fig1c_d_dataset, by= "Sample_ID")
+# Add the DBSCAN cluster assignments to your metadata
+DB_Cluster$DBSCAN_Cluster <- factor(dbscan_result$cluster)
+
+
+# Adjusting the plot to show DBSCAN results
+ggplot(DB_Cluster, aes(x =A1, y = A2, color = DBSCAN_Cluster)) +  
+  geom_point(alpha = 0.5) +
+  facet_wrap(~Disease) +
+  theme_minimal() +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), 
+       y = paste("PCoA2 (", Variance2, "%)", sep=""),
+       title = "DBSCAN Clustering on PCoA Results") + 
+  scale_colour_manual(values = c("gray","#81B2D4", "#ae2012", "#0b9497", "#cb6803","#006074"))
+#dev.off()
+```
+
+```{r}
+result_pheno <- adonis2(BC.dist ~ Disease, data = permanova1, permutations = 999, strata = permanova1$Source)
+result_pheno
+```
+
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_Pheno_g_levels.png", width = 12000, height = 8000, res = 1200)
+Fig1c <- ggplot(pc_plot_data1, aes(x,y,color=factor(Phenotype)))+geom_point(size=2)+
+        geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+        labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+        title = ' ')+theme_bw()+theme(legend.title=element_blank())+
+        scale_colour_manual(values=c("nonIBD"="#e9d8a6", "CD" = "#001219", "UC" = "#ae2012"),
+                            labels = c("Crohn's Disease (CD)", "Health Control (nonIBD)" , "Ulcerative Colitis (UC)")) +
+                            geom_segment(data = pheno_median, aes(xend = x, yend = y), 
+                                         x = 0, y = 0, color = "black", 
+                                         arrow = arrow(length = unit(3, "mm"))) +
+                            geom_label(data = pheno_median, aes(x = x, y = y , label = Phenotype), 
+                            color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_pheno$R2[1],3),'\n',"p-value = ",result_pheno$`Pr(>F)`[1]),collapse = ''),
+               x = -0.3, y = 0.55, color = "black")
+
+dev.off()
+```
+
+## by Pheno
+```{r}
+dfs_control<- pc_plot_data1
+#dfs_control <- subset(pc_plot_data1, Phenotype == "nonIBD")
+result_Control <- adonis2(BC.dist ~ permanova1$Country, data = permanova1, permutations = 999, strata = permanova1$Source)
+```
+
+# This plot represents the phenotypic control data from all studies.
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_projects_by_nonIBD_g_levels.png", width = 12000, height = 8000, res = 1200)
+# Draw Figure 1c
+# Fig1c <- ggplot(dfs_control, aes(x,y,color=factor(Source)))+geom_point(size=2)+
+#         geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+#         labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+#         title = ' ')+theme_bw()+theme(legend.title=element_blank()) + scale_colour_manual(values=sector_color_palette) +                           geom_segment(data = country_median, aes(xend = x, yend = y), 
+#                                          x = 0, y = 0, color = "black", 
+#                                          arrow = arrow(length = unit(3, "mm"))) +
+#                             geom_label(data = country_median, aes(x = x, y = y , label = Nationally), 
+#                             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+Fig1c <- ggplot(dfs_control, aes(x, y, color = factor(Source))) +
+  geom_point(size = 2) +
+  stat_ellipse(level = 0.95) +
+  labs(x = paste("PCoA1 (", Variance1, "%)", sep = ""),
+       y = paste("PCoA2 (", Variance2, "%)", sep = ""),
+       title = ' ') +
+  theme_bw() +
+  theme(legend.title = element_blank()) +
+  scale_colour_manual(values = sector_color_palette) +
+  geom_segment(data = dfs_control %>% 
+                 group_by(Country_group) %>% 
+                 summarise(x = mean(x), y = mean(y)),
+               aes(x = 0, y = 0, xend = x, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               color = "black") +
+  geom_label(data = dfs_control %>% 
+               group_by(Country_group) %>% 
+               summarise(x = mean(x), y = mean(y)),
+             aes(label = Country_group), 
+             color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_Control$R2[1],3),'\n',"p-value = ",result_Control$`Pr(>F)`[1]),collapse = ''),
+              x = -0.43, y = 0.55, color = "black") #for genus is -0.43 | #for genus is -0.3
+dev.off()
+```
+# arrow for all features in metadata 
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_all_demo_g_levels.png", width = 12000, height = 8000, res = 1200)
+Fig1c <- ggplot(dfs_control, aes(x,y,color=factor(Source)))+geom_point(size=0.8)+
+        geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+        labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+        title = ' ')+theme_bw()+theme(legend.title=element_blank()) + scale_colour_manual(values=sector_color_palette) + 
+                            geom_segment(data = all_demo, aes(xend = x, yend = y), 
+                                         x = 0, y = 0, color = "black", 
+                                         arrow = arrow(length = unit(3, "mm"))) +
+                            geom_label(data = all_demo, aes(x = x, y = y , label = Category), 
+                            color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_Control$R2[1],3),'\n',"p-value = ",result_Control$`Pr(>F)`[1]),collapse = ''),
+                x = -0.5, y = 0.55, color = "black")
+
+dev.off()
+```
+
+
+```{r}
+dfs_control <- subset(pc_plot_data1, Phenotype == "nonIBD")
+result_Control <- adonis2(BC.dist ~ pc_plot_data1$Phenotype == "nonIBD", data = permanova1[, 12:ncol(permanova1)], permutations = 999,strata = pc_plot_data1$Country_group)
+```
+
+# Country groups By nonIBD
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_Country_group_s_levels.png", width = 12000, height = 8000, res = 1200)
+# Draw Figure 1c
+Fig1c <- ggplot(dfs_control, aes(x,y,color=factor(Country_group)))+geom_point(size=2)+
+        geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+        labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+        title = ' ')+theme_bw()+theme(legend.title=element_blank()) +
+        #scale_colour_manual(values=c("Female"="#e9d8a6", "Male" = "#ae2012"))
+        #scale_colour_manual(values=c("Adult"="#e9d8a6", "Young" = "#ae2012"))
+        scale_colour_manual(values=c("America"="#e9d8a6", "Europe" = "#ae2012"))
+                            #,labels = c("Crohn's Disease (CD)", "Health Control (nonIBD)" , "Ulcerative Colitis (UC)")) +
+                            # geom_segment(data = sex_median, aes(xend = x, yend = y), 
+                            #              x = 0, y = 0, color = "black", 
+                            #              arrow = arrow(length = unit(3, "mm"))) +
+                            # geom_label(data = sex_median, aes(x = x, y = y , label = Sex), 
+                            # color = "black", fill = "gray", alpha = 0.8, label.size = NA)
+
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_Control$R2[1],3),'\n',"p-value = ",result_Control$`Pr(>F)`[1]),collapse = ''),
+              x = -0.25, y = 0.55, color = "black") #for species is 0.35
+dev.off()
+```
+
+
+```{r}
+dfs_CD <- subset(pc_plot_data1, Phenotype == "CD")
+
+result_CD <- adonis2(BC.dist ~ Disease == "CD", data = permanova1, permutations = 999,strata = permanova1$study)
+```
+
+# This plot represents the phenotypic CD data from all studies.
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_projects_by_CD.png", width = 12000, height = 8000, res = 1200)
+# Draw Figure 1c
+Fig1c <- ggplot(dfs_CD, aes(x,y,color=factor(Source)))+geom_point(size=2)+
+        geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+        labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+        title = ' ')+theme_bw()+theme(legend.title=element_blank()) + scale_colour_manual(values=sector_color_palette)
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_CD$R2[1],3),'\n',"p-value = ",result_CD$`Pr(>F)`[1]),collapse = ''),
+             x = -0.35, y = 0.35, color = "black")
+
+dev.off()
+```
+
+```{r}
+dfs_UC <- subset(pc_plot_data1, Phenotype == "UC")
+result_UC <- adonis2(BC.dist ~ Disease == "UC", data = permanova1, permutations = 999,strata = permanova1$study)
+```
+
+# This plot represents the phenotypic UC data from all studies.
+```{r}
+png(filename = "~/metaanalysis/datasets/FIGURES/PCoA/PCOA_projects_by_UC.png", width = 12000, height = 8000, res = 1200)
+# Draw Figure 1c
+Fig1c <- ggplot(dfs_UC, aes(x,y,color=factor(Source)))+geom_point(size=2)+
+        geom_point(aes(x=mean.x,y=mean.y),size=0)+stat_ellipse(level = 0.95)+
+        labs(x = paste("PCoA1 (", Variance1, "%)", sep=""), y = paste("PCoA2 (", Variance2, "%)", sep=""),
+        title = ' ')+theme_bw()+theme(legend.title=element_blank()) + scale_colour_manual(values=sector_color_palette)
+Fig1c+annotate("text", label = paste0(c("R-squared = ",round(result_UC$R2[1],3),'\n',"p-value = ",result_UC$`Pr(>F)`[1]),collapse = ''),
+               x = -0.35, y = 0.35, color = "black")
+dev.off()
+
+```
+##### 
+```{r}
+Phenotype <- c("nonIBD", "CD", "UC")
+# Assuming summary_df has been initialized earlier in the script
+summary_df <- data.frame(Comparison = character(), P_Value = numeric(), Phenotype = character(), P_Value_Adjusted = numeric())
+
+for (pheno in Phenotype) {
+  permanova_pheno <- subset(permanova1, Phenotype == pheno)
+  unique_studies <- unique(permanova_pheno$study)
+  results_list <- list()
+  p_values <- numeric() # Initialize a vector to store raw p-values
+
+  for(i in 1:(length(unique_studies) - 1)) {
+    for(j in (i + 1):length(unique_studies)) {
+      subset_data <- permanova1[permanova1$study %in% c(unique_studies[i], unique_studies[j]), ]
+      BC.dist_subset <- vegdist(subset_data[,c(4:2379)], method = 'bray')
+      result <- adonis2(BC.dist_subset ~ study, data = subset_data, permutations = 9999)
+      results_list[[paste(unique_studies[i], "vs", unique_studies[j])]] <- result
+      p_values <- c(p_values, result$'Pr(>F)'[1]) # Store the raw p-value
+    }
+  }
+
+  # Calculate the FDR-adjusted p-values for the current phenotype
+  p_values_adjusted <- p.adjust(p_values, method = "fdr")
+
+  # Now loop through the results_list and create a temp_df for each comparison
+  counter <- 1 # Counter to keep track of the adjusted p-values index
+  for(comp in names(results_list)) {
+    p_val <- results_list[[comp]]$'Pr(>F)'[1]
+    if(!is.na(p_val)) {
+      temp_df <- data.frame(
+        Comparison = comp, 
+        P_Value = p_val, 
+        Phenotype = pheno, 
+        P_Value_Adjusted = p_values_adjusted[counter] # Get the adjusted p-value
+      )
+      summary_df <- rbind(summary_df, temp_df)
+      counter <- counter + 1 # Increment the counter
+    }
+  }
+}
+
+
+# Normalize the Comparison column
+summary_df$Comparison <- summary_df$Comparison %>%
+  str_split(" vs ") %>%
+  map(sort) %>%
+  map_chr(paste, collapse = " vs ")
+
+wider_df <- summary_df %>%
+  pivot_wider(names_from = Phenotype, values_from = c(P_Value, P_Value_Adjusted))
+
+summary_dfs <- wider_df %>%
+  group_by(Comparison) %>%
+  summarise(across(everything(), sum, na.rm = TRUE))
+
+summary_dfs <- summary_dfs %>%
+  mutate(across(everything(), ~replace(., . == 0, NA)))
+
+summary_dfs <- as.data.frame(summary_dfs)
+rownames(summary_dfs) <- summary_dfs$Comparison
+summary_dfs$Comparison <- NULL
+summary_dfs <- summary_dfs[c("P_Value_CD", "P_Value_UC", "P_Value_nonIBD", "P_Value_Adjusted_CD", "P_Value_Adjusted_UC", "P_Value_Adjusted_nonIBD" )]
+
+summary_dfs <- summary_dfs %>% rename("CD" = "P_Value_CD", "UC" = "P_Value_UC", "nonIBD" = "P_Value_nonIBD", "CD " = "P_Value_Adjusted_CD",
+                                 "UC " = "P_Value_Adjusted_UC",  "nonIBD " = "P_Value_Adjusted_nonIBD")
+summary_dfs <- round(summary_dfs, 4)
+
+
+rownames(summary_dfs) <- gsub("Eran_Elinav(?= vs)", "Federici et al., (2022)", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("HMP2_pilot(?= vs)", "HMP2 Pilot", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("Lewis(?= vs)", "Lewis (2015)", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("IBD_1000(?= vs)", "1000 IBD", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("ibdmdb(?= vs)", "IBDMDB", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("ibdmdb2(?= vs)", "IBDMDB2", rownames(summary_dfs), perl = TRUE)
+                              
+rownames(summary_dfs) <- gsub("(?<=vs )Eran_Elinav", "Federici et al., (2022)", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("(?<=vs )HMP2_pilot", "HMP2 Pilot", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("(?<=vs )Lewis", "Lewis (2015)", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("(?<=vs )IBD_1000", "1000 IBD", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("(?<=vs )ibdmdb", "IBDMDB", rownames(summary_dfs), perl = TRUE)
+rownames(summary_dfs) <- gsub("(?<=vs )ibdmdb2", "IBDMDB2", rownames(summary_dfs), perl = TRUE)
+```
+
+```{r}
+tab <- kable(summary_dfs, format = "latex", booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+    column_spec(c(1), border_right = T, width = "6cm") %>%
+    add_header_above(c("","P val" = 3, "P Adjust"= 3)) %>% 
+    row_spec(c(31, 32, 49), bold = T)
+
+save_kable(tab, file = "~/metaanalysis/datasets/Controls/summray_adonis.pdf")
+```
+
+# 2. Differential Abundance (DA) Analysis with ANCOM-BC
+
+```{r, message=FALSE, warning=FALSE, comment=NA, eval=FALSE}
+#"IBD_1000", "Eran_Elinav", "HMP1", "HMP2", "HMP2_pilot", "HMP3", "ibdmdb", "ibdmdb2", "Lewis", "MetaHit", "MetaHit2", "LLDeep", "PRIZM"
+meta.data = Fig1c_d_dataset
+meta_data <- meta.data %>% filter(!Country %in% c("Israel"))
+meta_data$Country_gro <- ifelse(meta_data$Country == "America", "America", "Europe")
+#meta_data = meta_data%>%filter(Disease%in%c("nonIBD")) # , Country_gro%in%c("America"))
+table(meta_data$Country_gro)
+
+#subset 0.1 relative abundance
+meta_data[, 12:ncol(meta_data)] <- sapply(meta_data[, 12:ncol(meta_data)], function(x) ifelse(is.na(x) | x < 0.1, 0, x))
+
+sector_color_palette <- c("Federici et al., (2022) - America"="#6a996e", 
+                          "Federici et al., (2022) - Europe" = "#fcbf49",
+                          "HMP1"="#0b9497",             
+                          "HMP2"="#84c6bf",             
+                          "HMP3"="#006074",             
+                          "IBDMDB"="#8d99ae",          
+                          "HMP2 Pilot"="#81B2D4",       
+                          "IBDMDB2"="#c8d5b9",          
+                          "Lewis (2015)"="#84c9df",     
+                          "MetaHit"="#9c2327",         
+                          "MetaHit2"="#ead9a1",        
+                          "LLDeep"="#cb6803",          
+                          "PRISM"="#bc3f04",
+                          "1000 IBD"="#be7c4d") 
+
+``` 
+
+```{r}
+America_non <- meta_data %>% filter(Country_gro%in%c("America"),(Disease%in%c("nonIBD")))
+Europe_non <- meta_data %>% filter(Country_gro%in%c("Europe"),(Disease%in%c("nonIBD")))
+
+IBD_1000_amcom <- meta_data %>% filter(Source%in%c("IBD_1000"), (Disease%in%c("UC"))) 
+
+# IBD_1000_amcom <- meta_data %>%
+#   filter(Source == "IBD_1000" & Disease == "CD") %>%
+#   {
+#     total_rows <- nrow(.)
+#     if (total_rows > 61) {
+#       rows_to_keep <- c(1:11, sample(12:total_rows, 50))
+#     } else {
+#       rows_to_keep <- 1:total_rows
+#     }
+#     .[rows_to_keep, ]
+#   }
+# 
+IBD_1000_amcom <- bind_rows(IBD_1000_amcom, Europe_non)
+IBD_1000_amcom <- as.data.frame(IBD_1000_amcom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .))))
+
+Eran_Elinav_amcom_America <- meta_data %>% filter(Source%in%c("Eran_Elinav"), Country_gro%in%c("America"), (Disease%in%c("UC")))
+Eran_Elinav_amcom_Europe <- meta_data %>% filter(Source%in%c("Eran_Elinav"), Country_gro%in%c("Europe"), (Disease%in%c("UC")))
+Eran_Elinav_amcom_America <- bind_rows(Eran_Elinav_amcom_America, America_non)
+Eran_Elinav_amcom_America <- Eran_Elinav_amcom_America |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+Eran_Elinav_amcom_Europe <- bind_rows(Eran_Elinav_amcom_Europe, Europe_non)
+Eran_Elinav_amcom_Europe <- Eran_Elinav_amcom_Europe |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+HMP2_pilot_ancom <- meta_data %>% filter(Source%in%c("HMP2_pilot"), (Disease%in%c("UC")))
+HMP2_pilot_ancom <- bind_rows(HMP2_pilot_ancom, America_non)
+HMP2_pilot_ancom <- HMP2_pilot_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+ibdmdb_ancom <- meta_data %>% filter(Source%in%c("IBDMDB"), (Disease%in%c("UC")))
+ibdmdb_ancom <- bind_rows(ibdmdb_ancom, America_non)
+ibdmdb_ancom <- ibdmdb_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+ibdmdb2_ancom <- meta_data %>% filter(Source%in%c("IBDMDB2"), (Disease%in%c("UC")))
+ibdmdb2_ancom <- bind_rows(ibdmdb2_ancom, America_non)
+ibdmdb2_ancom <- ibdmdb2_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+Lewis_ancom <- meta_data %>% filter(Source%in%c("Lewis"), (Disease%in%c("UC")))
+Lewis_ancom <- bind_rows(Lewis_ancom, America_non)
+Lewis_ancom <- Lewis_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+MetaHit_ancom <- meta_data %>% filter(Source%in%c("MetaHit"), (Disease%in%c("UC")))
+MetaHit_ancom <- bind_rows(MetaHit_ancom, Europe_non)
+MetaHit_ancom <- MetaHit_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+MetaHit2_ancom <- meta_data %>% filter(Source%in%c("MetaHit2"), (Disease%in%c("UC")))
+MetaHit2_ancom <- bind_rows(MetaHit2_ancom, Europe_non)
+MetaHit2_ancom <- MetaHit2_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+PRISM_ancom <- meta_data %>% filter(Source%in%c("PRISM"), (Disease%in%c("UC")))
+PRISM_ancom <- bind_rows(PRISM_ancom, America_non)
+PRISM_ancom <- PRISM_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+df_list <- list(IBD_1000_amcom = IBD_1000_amcom,
+                Eran_Elinav_amcom_America = Eran_Elinav_amcom_America,
+                Eran_Elinav_amcom_Europe = Eran_Elinav_amcom_Europe,
+                HMP2_pilot_ancom = HMP2_pilot_ancom,
+                ibdmdb_ancom = ibdmdb_ancom,
+                ibdmdb2_ancom = ibdmdb2_ancom,
+                Lewis_ancom = Lewis_ancom, 
+                MetaHit_ancom = MetaHit_ancom,
+                MetaHit2_ancom = MetaHit2_ancom, 
+                PRISM_ancom = PRISM_ancom) 
+                
+# Apply the selection operation to each data frame in the list
+df_list <- lapply(df_list, function(df) {
+  df |> select(where(~ !all(.x == 0, na.rm = TRUE)))
+})
+list2env(df_list, envir = .GlobalEnv)
+#View(df_list$MetaHit2_ancom)
+
+feature.table_list <- lapply(df_list, function(df) {
+  # Convert columns (except the first 9) to numeric
+  df[, -c(1:9)] <- lapply(df[, -c(1:9)], function(x) as.numeric(as.character(x)))
+  
+  # Transpose the data frame
+  transposed_df <- t(df)
+  
+  # Convert the transposed matrix back to a data frame
+  transposed_df <- as.data.frame(transposed_df, stringsAsFactors = FALSE)
+  
+  # Remove columns where all values are 0
+  cleaned_df <- transposed_df %>%
+    select(where(~ !all(.x == 0, na.rm = TRUE)))
+  
+  return(cleaned_df)
+})
+
+# Update the environment with transposed data frames
+list2env(feature.table_list, envir = .GlobalEnv)
+```
+
+```{r}
+run_ancom <- function(meta_data, obs_abn, comparison_text, diagnosis_group, vars.grups) {
+
+  # Convert Disease column to character
+meta_data[[vars.grups]] <- factor(as.character(meta_data[[vars.grups]]),levels = c("nonIBD", "UC"))
+  
+  # Generate Sample_ID
+  meta_data$Sample_ID <- seq(nrow(meta_data))
+  
+  # Adjust column names for obs_abn to match Sample_IDs
+  colnames(obs_abn) <- seq(nrow(meta_data))
+  
+  # Remove first 8 rows from obs_abn as per original code snippet
+  obs_abn <- obs_abn[9:nrow(obs_abn), ]
+  
+  # Prepare feature.table
+  original_row_names <- rownames(obs_abn)
+  feature.table <- as.data.frame(sapply(obs_abn, function(x) as.numeric(as.character(x))), stringsAsFactors = FALSE)
+  rownames(feature.table) <- original_row_names
+  feature.table <- feature.table * 1000000
+  
+  # Pre-processing
+  zero.cut=0.90; lib.cut=1000; neg.lb=TRUE
+  pre.process <- feature_table_pre_process(feature.table, meta_data, "Sample_ID", vars.grups, zero.cut, lib.cut, neg.lb)
+  
+  feature.table <- pre.process$feature.table
+  library.size <- pre.process$library.size
+  group.name <- pre.process$group.name
+  group.ind <- pre.process$group.ind
+  struc.zero <- pre.process$structure.zeros
+  
+  # Run ANCOM-BC
+  grp.name=group.name; grp.ind=group.ind; adj.method="bonferroni"
+  tol.EM=1e-5; max.iterNum=100; perNum=1000; alpha=0.05
+  out <- ANCOM_BC(feature.table, group.name, group.ind, struc.zero, adj.method,tol.EM, max.iterNum, perNum, alpha)
+  
+  # Prepare result
+  res.ANCOM_BC <- data.frame(genus = rownames(out$feature.table), out$res,
+                             struc.zero[rownames(out$feature.table), ],
+                             row.names = NULL, stringsAsFactors = FALSE, check.names = FALSE)
+  
+  alpha.adj <- 0.05 / nrow(res.ANCOM_BC)
+  critic.val <- qnorm(1 - alpha.adj / 2)
+  
+  print(res.ANCOM_BC)
+  # Adjusting results based on the comparison_text
+  res.ANCOM_BC <- res.ANCOM_BC %>%
+    transmute(
+      genus,
+      log.fold.change = -get(paste0("mean.difference (", comparison_text, ")")),
+      se = get(paste0("se (", comparison_text, ")")),
+      ci.lo = log.fold.change - critic.val * se,
+      ci.up = log.fold.change + critic.val * se,
+      struc.zero = ifelse(se == 0, 1, 0),
+      q.val,
+      diagnosis.group = diagnosis_group,
+      star = ifelse(q.val < .001, "***", ifelse(q.val < .01, "**", ifelse(q.val < .05, "*", "")))
+    ) %>%
+    arrange(q.val)
+  
+  # Adding missing genera with default values
+  if(length(setdiff(original_row_names, res.ANCOM_BC$genus)) > 0) {
+    res.ANCOM_BC_00 <- data.frame(
+      genus = setdiff(original_row_names, res.ANCOM_BC$genus),
+      log.fold.change = 0, se = 0, ci.lo = 0, ci.up = 0,
+      struc.zero = 1, q.val = 1, diagnosis.group = diagnosis_group, star = "",
+      stringsAsFactors = FALSE
+    )
+    res.ANCOM_BC <- rbind(res.ANCOM_BC, res.ANCOM_BC_00)
+    # res.ANCOM_BC$diagnosis.group=factor(res.ANCOM_BC$diagnosis.group,
+    #                                levels = c(diagnosis.group))
+    res.ANCOM_BC$genus=sapply(res.ANCOM_BC$genus, function(x) strsplit(x, "__")[[1]][2])
+    res.ANCOM_BC$struc.zero=factor(res.ANCOM_BC$struc.zero)
+    #res.ANCOM_BC <- res.ANCOM_BC %>% filter((star != "") & (log.fold.change != 0)) # keep onlt segnificent taxa 
+    return(res.ANCOM_BC)
+}}
+
+```
+
+```{r}
+res.ANCOM_BC_0 <- run_ancom(df_list$IBD_1000_amcom, feature.table_list$IBD_1000_amcom, "CD - nonIBD", "1000 IBD", "Disease")
+res.ANCOM_BC_1 <- run_ancom(df_list$Eran_Elinav_amcom_America, feature.table_list$Eran_Elinav_amcom_America, "CD - nonIBD", "Federici et al., (2022) - America", "Disease")
+res.ANCOM_BC_2 <- run_ancom(df_list$Eran_Elinav_amcom_Europe, feature.table_list$Eran_Elinav_amcom_Europe, "CD - nonIBD", "Federici et al., (2022) - Europe", "Disease")
+res.ANCOM_BC_3 <- run_ancom(df_list$ibdmdb_ancom, feature.table_list$ibdmdb_ancom, "CD - nonIBD", "IBDMDB", "Disease")
+res.ANCOM_BC_4 <- run_ancom(df_list$ibdmdb2_ancom, feature.table_list$ibdmdb2_ancom, "CD - nonIBD", "IBDMDB2", "Disease")
+res.ANCOM_BC_5 <- run_ancom(df_list$HMP2_pilot_ancom, feature.table_list$HMP2_pilot_ancom, "CD - nonIBD", "HMP2 Pilot", "Disease")
+res.ANCOM_BC_6 <- run_ancom(df_list$Lewis_ancom, feature.table_list$Lewis_ancom, "CD - nonIBD", "Lewis (2015)", "Disease")
+res.ANCOM_BC_7 <- run_ancom(df_list$MetaHit_ancom, feature.table_list$MetaHit_ancom, "CD - nonIBD", "MetaHit", "Disease")
+res.ANCOM_BC_8 <- run_ancom(df_list$MetaHit2_ancom, feature.table_list$MetaHit2_ancom, "CD - nonIBD", "MetaHit2", "Disease")
+res.ANCOM_BC_9 <- run_ancom(df_list$PRISM_ancom, feature.table_list$PRISM_ancom, "CD - nonIBD", "PRISM", "Disease")
+```
+
+```{r}
+res.ANCOM_BC_0 <- run_ancom(df_list$IBD_1000_amcom, feature.table_list$IBD_1000_amcom, "UC - nonIBD", "1000 IBD", "Disease")
+res.ANCOM_BC_1 <- run_ancom(df_list$Eran_Elinav_amcom_America, feature.table_list$Eran_Elinav_amcom_America, "UC - nonIBD", "Federici et al., (2022) - America", "Disease")
+res.ANCOM_BC_2 <- run_ancom(df_list$Eran_Elinav_amcom_Europe, feature.table_list$Eran_Elinav_amcom_Europe, "UC - nonIBD", "Federici et al., (2022) - Europe", "Disease")
+res.ANCOM_BC_3 <- run_ancom(df_list$ibdmdb_ancom, feature.table_list$ibdmdb_ancom, "UC - nonIBD", "IBDMDB", "Disease")
+res.ANCOM_BC_4 <- run_ancom(df_list$ibdmdb2_ancom, feature.table_list$ibdmdb2_ancom, "UC - nonIBD", "IBDMDB2", "Disease")
+res.ANCOM_BC_5 <- run_ancom(df_list$HMP2_pilot_ancom, feature.table_list$HMP2_pilot_ancom, "UC - nonIBD", "HMP2 Pilot", "Disease")
+#res.ANCOM_BC_6 <- run_ancom(df_list$Lewis_ancom, feature.table_list$Lewis_ancom, "UC - nonIBD", "Lewis (2015)", "Disease")
+res.ANCOM_BC_7 <- run_ancom(df_list$MetaHit_ancom, feature.table_list$MetaHit_ancom, "UC - nonIBD", "MetaHit", "Disease")
+res.ANCOM_BC_8 <- run_ancom(df_list$MetaHit2_ancom, feature.table_list$MetaHit2_ancom, "UC - nonIBD", "MetaHit2", "Disease")
+res.ANCOM_BC_9 <- run_ancom(df_list$PRISM_ancom, feature.table_list$PRISM_ancom, "UC - nonIBD", "PRISM", "Disease")
+```
+
+```{r}
+#png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_50_sample_s_levels.png", width = 12000, height = 8000, res = 1200)
+png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_trend_g_levels_all_log_UC.png", width = 12000, height = 8000, res = 1200)
+
+res.ANCOM_BC_US <- rbind(res.ANCOM_BC_1,  res.ANCOM_BC_3,
+               res.ANCOM_BC_4, res.ANCOM_BC_5, res.ANCOM_BC_6, res.ANCOM_BC_9)
+
+res.ANCOM_BC_EURO <- rbind(res.ANCOM_BC_0,res.ANCOM_BC_2, res.ANCOM_BC_7,
+               res.ANCOM_BC_8, res.ANCOM_BC_9)
+
+res.ANCOM_BC_all <- rbind(res.ANCOM_BC_US, res.ANCOM_BC_EURO)
+res.ANCOM_BC_all <- res.ANCOM_BC_all %>%
+  filter(!str_starts(genus, "GG")) %>%
+  # Uncomment the next line if you need to exclude "Candidatus_Borkfalkia"
+  # filter(genus != "Candidatus_Borkfalkia") %>%
+  filter(log.fold.change != 0) %>%
+  group_by(genus) %>%
+  mutate(has_non_empty_star = any(star != "")) %>%
+  ungroup() %>%
+  filter(has_non_empty_star | genus %in% c("Alistipes", "Prevotella", "Faecalicatena")) %>%
+  select(-has_non_empty_star)
+
+
+res.ANCOM_BC_US =cbind(res.ANCOM_BC_US , type= "(UC vs nonIBD)")
+res.ANCOM_BC_EURO=cbind(res.ANCOM_BC_EURO, type= "(UC vs nonIBD)")
+res.ANCOM_BC_all=cbind(res.ANCOM_BC_all, type= "(UC vs nonIBD)")
+
+res.ANCOM_BC_US$genus=factor(res.ANCOM_BC_US$genus, levels = sort(unique(res.ANCOM_BC_US$genus)))
+genus=unique(res.ANCOM_BC_US$genus)
+
+res.ANCOM_BC_EURO$genus=factor(res.ANCOM_BC_EURO$genus, levels = sort(unique(res.ANCOM_BC_EURO$genus)))
+genus=unique(res.ANCOM_BC_EURO$genus)
+
+res.ANCOM_BC_all$genus=factor(res.ANCOM_BC_all$genus, levels = sort(unique(res.ANCOM_BC_all$genus)))
+genus=unique(res.ANCOM_BC_all$genus)
+
+
+p1 <- ggplot(res.ANCOM_BC_all, aes(x=genus, y=log.fold.change, ymin=ci.lo, ymax=ci.up, group=diagnosis.group)) +
+  geom_bar(aes(fill=diagnosis.group), stat="identity", width=0.4, position=position_dodge())+
+  geom_errorbar(width=0.2, size=0.25, position=position_dodge(width = 0.4))+
+  geom_abline(slope = 0, intercept = 0, linetype="dashed", alpha=0.5)+
+  labs(x=NULL, y="Log Fold Change")+coord_flip()+
+  scale_fill_discrete(name=NULL)+
+  scale_x_discrete(limits = rev(levels(res.ANCOM_BC_all$genus)))+
+  scale_fill_manual(values=sector_color_palette) + 
+  facet_grid(.~type, scales = "free_x")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill="white"))+
+  geom_text(aes(y=log.fold.change+5*sign(log.fold.change), label=star),
+            vjust=.7, color="black", position=position_dodge(width = 0.5), size =2)
+
+p1+geom_point(data = res.ANCOM_BC_all%>%filter(struc.zero==1), aes(x=genus, y=log.fold.change),
+                   position=position_dodge(width = 0.4), shape=18)
+
+#ggarrange(p1, labels = "a")
+#ggsave("../figures/Figure 6a.pdf", width=10, height=5, units='in')
+dev.off()
+```
+############
+
+# Chack the result of DA if american nonIBD is consistenlty for Europe case 
+
+```{r}
+America_non <- meta_data %>% filter(Country_gro%in%c("America"),(Disease%in%c("nonIBD")))
+Europe_non <- meta_data %>% filter(Country_gro%in%c("Europe"),(Disease%in%c("nonIBD")))
+
+IBD_1000_amcom <- meta_data %>% filter(Source%in%c("IBD_1000"), (Disease%in%c("CD")))
+IBD_1000_amcom <- bind_rows(IBD_1000_amcom, America_non)
+IBD_1000_amcom <- as.data.frame(IBD_1000_amcom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .))))
+
+Eran_Elinav_amcom_America <- meta_data %>% filter(Source%in%c("Eran_Elinav"), Country_gro%in%c("America"), (Disease%in%c("CD")))
+Eran_Elinav_amcom_Europe <- meta_data %>% filter(Source%in%c("Eran_Elinav"), Country_gro%in%c("Europe"), (Disease%in%c("CD")))
+Eran_Elinav_amcom_America <- bind_rows(Eran_Elinav_amcom_America, Europe_non)
+Eran_Elinav_amcom_America <- Eran_Elinav_amcom_America |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+Eran_Elinav_amcom_Europe <- bind_rows(Eran_Elinav_amcom_Europe, America_non)
+Eran_Elinav_amcom_Europe <- Eran_Elinav_amcom_Europe |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+HMP2_pilot_ancom <- meta_data %>% filter(Source%in%c("HMP2_pilot"), (Disease%in%c("CD")))
+HMP2_pilot_ancom <- bind_rows(HMP2_pilot_ancom, Europe_non)
+HMP2_pilot_ancom <- HMP2_pilot_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+ibdmdb_ancom <- meta_data %>% filter(Source%in%c("IBDMDB"), (Disease%in%c("CD")))
+ibdmdb_ancom <- bind_rows(ibdmdb_ancom, Europe_non)
+ibdmdb_ancom <- ibdmdb_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+ibdmdb2_ancom <- meta_data %>% filter(Source%in%c("IBDMDB2"), (Disease%in%c("CD")))
+ibdmdb2_ancom <- bind_rows(ibdmdb2_ancom, Europe_non)
+ibdmdb2_ancom <- ibdmdb2_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+Lewis_ancom <- meta_data %>% filter(Source%in%c("Lewis"), (Disease%in%c("CD")))
+Lewis_ancom <- bind_rows(Lewis_ancom, Europe_non)
+Lewis_ancom <- Lewis_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+MetaHit_ancom <- meta_data %>% filter(Source%in%c("MetaHit"), (Disease%in%c("CD")))
+MetaHit_ancom <- bind_rows(MetaHit_ancom, America_non)
+MetaHit_ancom <- MetaHit_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+MetaHit2_ancom <- meta_data %>% filter(Source%in%c("MetaHit2"), (Disease%in%c("CD")))
+MetaHit2_ancom <- bind_rows(MetaHit2_ancom, America_non)
+MetaHit2_ancom <- MetaHit2_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+PRISM_ancom <- meta_data %>% filter(Source%in%c("PRISM"), (Disease%in%c("CD")))
+PRISM_ancom <- bind_rows(PRISM_ancom, Europe_non)
+PRISM_ancom <- PRISM_ancom |> mutate(across(everything(), ~ifelse(is.na(.), 0, .)))
+
+df_list <- list(IBD_1000_amcom = IBD_1000_amcom,
+                Eran_Elinav_amcom_America = Eran_Elinav_amcom_America,
+                Eran_Elinav_amcom_Europe = Eran_Elinav_amcom_Europe,
+                HMP2_pilot_ancom = HMP2_pilot_ancom,
+                ibdmdb_ancom = ibdmdb_ancom,
+                ibdmdb2_ancom = ibdmdb2_ancom,
+                Lewis_ancom = Lewis_ancom, 
+                MetaHit_ancom = MetaHit_ancom,
+                MetaHit2_ancom = MetaHit2_ancom, 
+                PRISM_ancom = PRISM_ancom) 
+                
+# Apply the selection operation to each data frame in the list
+df_list <- lapply(df_list, function(df) {
+  df |> select(where(~ !all(.x == 0, na.rm = TRUE)))
+})
+list2env(df_list, envir = .GlobalEnv)
+#View(df_list$MetaHit2_ancom)
+
+feature.table_list <- lapply(df_list, function(df) {
+  # Convert columns (except the first 9) to numeric
+  df[, -c(1:9)] <- lapply(df[, -c(1:9)], function(x) as.numeric(as.character(x)))
+  
+  # Transpose the data frame
+  transposed_df <- t(df)
+  
+  # Convert the transposed matrix back to a data frame
+  transposed_df <- as.data.frame(transposed_df, stringsAsFactors = FALSE)
+  
+  # Remove columns where all values are 0
+  cleaned_df <- transposed_df %>%
+    select(where(~ !all(.x == 0, na.rm = TRUE)))
+  
+  return(cleaned_df)
+})
+
+# Update the environment with transposed data frames
+list2env(feature.table_list, envir = .GlobalEnv)
+```
+
+```{r}
+res.ANCOM_BC_0 <- run_ancom(df_list$IBD_1000_amcom, feature.table_list$IBD_1000_amcom, "CD - nonIBD", "1000 IBD", "Disease")
+res.ANCOM_BC_1 <- run_ancom(df_list$Eran_Elinav_amcom_America, feature.table_list$Eran_Elinav_amcom_America, "CD - nonIBD", "Federici et al., (2022) - America", "Disease")
+res.ANCOM_BC_2 <- run_ancom(df_list$Eran_Elinav_amcom_Europe, feature.table_list$Eran_Elinav_amcom_Europe, "CD - nonIBD", "Federici et al., (2022) - Europe", "Disease")
+res.ANCOM_BC_3 <- run_ancom(df_list$ibdmdb_ancom, feature.table_list$ibdmdb_ancom, "CD - nonIBD", "IBDMDB", "Disease")
+res.ANCOM_BC_4 <- run_ancom(df_list$ibdmdb2_ancom, feature.table_list$ibdmdb2_ancom, "CD - nonIBD", "IBDMDB2", "Disease")
+res.ANCOM_BC_5 <- run_ancom(df_list$HMP2_pilot_ancom, feature.table_list$HMP2_pilot_ancom, "CD - nonIBD", "HMP2 Pilot", "Disease")
+res.ANCOM_BC_6 <- run_ancom(df_list$Lewis_ancom, feature.table_list$Lewis_ancom, "CD - nonIBD", "Lewis (2015)", "Disease")
+res.ANCOM_BC_7 <- run_ancom(df_list$MetaHit_ancom, feature.table_list$MetaHit_ancom, "CD - nonIBD", "MetaHit", "Disease")
+res.ANCOM_BC_8 <- run_ancom(df_list$MetaHit2_ancom, feature.table_list$MetaHit2_ancom, "CD - nonIBD", "MetaHit2", "Disease")
+res.ANCOM_BC_9 <- run_ancom(df_list$PRISM_ancom, feature.table_list$PRISM_ancom, "CD - nonIBD", "PRISM", "Disease")
+```
+
+```{r, message=FALSE, warning=FALSE, comment=NA, fig.height=5, fig.width=10}
+png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_test_s_levels.png", width = 12000, height = 24000, res = 1200)
+res.ANCOM_BC_US <- rbind(res.ANCOM_BC_1,  res.ANCOM_BC_3,
+               res.ANCOM_BC_4, res.ANCOM_BC_5, res.ANCOM_BC_6, res.ANCOM_BC_9)
+
+res.ANCOM_BC_EURO <- rbind(res.ANCOM_BC_0,res.ANCOM_BC_2,
+               res.ANCOM_BC_8, res.ANCOM_BC_9)
+
+res.ANCOM_BC_all <- rbind(res.ANCOM_BC_US, res.ANCOM_BC_EURO)
+res.ANCOM_BC_all <- res.ANCOM_BC_all %>%
+  filter(!str_starts(genus, "GG")) %>%
+  filter(log.fold.change != 0) %>% 
+  group_by(genus) %>%
+  mutate(has_non_empty_star = any(star != "")) %>%
+  ungroup() %>%
+  filter(has_non_empty_star) %>%
+  select(-has_non_empty_star)
+
+
+res.ANCOM_BC_US =cbind(res.ANCOM_BC_US , type= "(CD vs nonIBD)")
+res.ANCOM_BC_EURO=cbind(res.ANCOM_BC_EURO, type= "(CD vs nonIBD)")
+res.ANCOM_BC_all=cbind(res.ANCOM_BC_all, type= "(CD vs nonIBD)")
+
+res.ANCOM_BC_US$genus=factor(res.ANCOM_BC_US$genus, levels = sort(unique(res.ANCOM_BC_US$genus)))
+genus=unique(res.ANCOM_BC_US$genus)
+
+res.ANCOM_BC_EURO$genus=factor(res.ANCOM_BC_EURO$genus, levels = sort(unique(res.ANCOM_BC_EURO$genus)))
+genus=unique(res.ANCOM_BC_EURO$genus)
+
+res.ANCOM_BC_all$genus=factor(res.ANCOM_BC_all$genus, levels = sort(unique(res.ANCOM_BC_all$genus)))
+genus=unique(res.ANCOM_BC_all$genus)
+
+
+p1 <- ggplot(res.ANCOM_BC_all, aes(x=genus, y=log.fold.change, ymin=ci.lo, ymax=ci.up, group=diagnosis.group)) +
+  geom_bar(aes(fill=diagnosis.group), stat="identity", width=0.4, position=position_dodge())+
+  geom_errorbar(width=0.2, size=0.25, position=position_dodge(width = 0.4))+
+  geom_abline(slope = 0, intercept = 0, linetype="dashed", alpha=0.5)+
+  labs(x=NULL, y="Log Fold Change")+coord_flip()+
+  scale_fill_discrete(name=NULL)+
+  scale_x_discrete(limits = rev(levels(res.ANCOM_BC_all$genus)))+
+  scale_fill_manual(values=sector_color_palette) + 
+  facet_grid(.~type, scales = "free_x")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill="white"))+
+  geom_text(aes(y=log.fold.change+5*sign(log.fold.change), label=star),
+            vjust=.7, color="black", position=position_dodge(width = 0.5), size =2)
+
+p1+geom_point(data = res.ANCOM_BC_all%>%filter(struc.zero==1), aes(x=genus, y=log.fold.change),
+                   position=position_dodge(width = 0.4), shape=18)
+
+#ggarrange(p1, labels = "a")
+#ggsave("../figures/Figure 6a.pdf", width=10, height=5, units='in')
+dev.off()
+```
+

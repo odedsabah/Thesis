@@ -1,0 +1,508 @@
+---
+title: "ITAI_DS"
+output: html_document
+date: "2024-09-05"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+#setwd(" ") 
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$get('label')
+```
+
+```{r}
+library(dplyr)
+library(vegan)
+library(ggplot2)
+library(forcats)
+library(ade4)
+library(kableExtra)
+library(stargazer)
+source("~/metaanalysis/datasets/ANCOM/ancom_bc.R")
+```
+
+```{r}
+G_TAXA_FROM_METAPHLAN <- as.data.frame(read.csv("~/metaanalysis/datasets/ITAI/ITAI_DS_COURSE_G.csv", check.names = FALSE))
+METADATA <- as.data.frame(read.csv("~/metaanalysis/datasets/ITAI/METADATA_ITAI_DS_COURSE.csv"))
+```
+
+```{r}
+METADATA$X <- NULL
+METADATA$Disease <- factor(METADATA$Disease)
+METADATA$Country <- factor(METADATA$Country)
+METADATA$Source <- factor(METADATA$Source)
+
+METADATA$Obesity <- factor(ifelse(METADATA$BMI >= 30, "Obesity", "non-Obesity"))
+METADATA$Age_group <- factor(ifelse(METADATA$Age >=18, "Adult", "Young"))
+METADATA$Sex <- factor(ifelse(METADATA$Sex == 0, NA, METADATA$Sex))
+METADATA$Country_group <- factor(ifelse(METADATA$Country == "America", "America", "Europe"))
+
+METADATA <- METADATA %>%
+  mutate(Source = fct_recode(Source,
+                            "Federici et al., (2022)" = "Eran_Elinav", 
+                             "HMP2 Pilot" = "HMP2_pilot",
+                             "Lewis (2015)" = "Lewis",
+                             "1000 IBD" = "IBD_1000")) %>% 
+  mutate(Source = case_when(
+    Source == "Federici et al., (2022)" & Country_group == "Europe" ~ "Federici et al., (2022) - Europe",
+    Source == "Federici et al., (2022)" & Country_group == "America" ~ "Federici et al., (2022) - America",
+    TRUE ~ as.character(Source))) %>%
+  mutate(Source = as.factor(Source))
+
+
+table(METADATA$Disease)
+table(METADATA$Source)
+table(METADATA$Country_group)
+```
+
+```{r}
+sector_color_palette <- c("Federici et al., (2022)"="#001219",
+                          "Federici et al., (2022) - America"="#6096ba", 
+                          "Federici et al., (2022) - Europe" = "#bc3f04",
+                          "HMP1"="#0b9497",             
+                          "HMP2"="#84c6bf",             
+                          "HMP3"="#006074",             
+                          "IBDMDB"="#8d99ae",          
+                          "HMP2 Pilot"="#81B2D4",       
+                          "IBDMDB2"="#c8d5b9",          
+                          "Lewis (2015)"="#84c9df",     
+                          "MetaHit"="#9c2327",         
+                          "MetaHit2"="#ead9a1",        
+                          "LLDeep"="#cb6803",          
+                          "PRISM"="#bc3f04",
+                          "1000 IBD"="#be7c4d",
+                          "America" = "#81B2D4",
+                          "Europe" = "#ead9a1",
+                          "Denmark" = "#bc3f04", 
+                          "France" = "#9a031e",
+                          "Germany" = "#9c2327",
+                          "Netherland" = "#bc3f04",
+                          "Spain" = "#9c2327") 
+```
+
+```{r, message=FALSE, warning=FALSE}
+rownames(G_TAXA_FROM_METAPHLAN) <- G_TAXA_FROM_METAPHLAN[,1]
+G_TAXA_FROM_METAPHLAN[,1] <- NULL
+
+G_TAXA_FROM_METAPHLAN[] <- lapply(G_TAXA_FROM_METAPHLAN, function(x) {
+  x <- as.numeric(as.character(x))
+  x[is.na(x)] <- 0
+  x[x <= 0.1] <- 0 # Rarefaction threshold
+  return(x)
+})
+
+G_TAXA_FROM_METAPHLAN <- as.data.frame(t(G_TAXA_FROM_METAPHLAN[, apply(G_TAXA_FROM_METAPHLAN, 2, function(col) any(col != 0))]))
+
+G_TAXA_FROM_METAPHLAN$Sample_ID <- rownames(G_TAXA_FROM_METAPHLAN)
+
+META_G_TAXA <- merge(METADATA, G_TAXA_FROM_METAPHLAN, by = "Sample_ID", all = TRUE) 
+
+META_G_TAXA_ALL <- META_G_TAXA  %>%
+  filter(!is.na(Disease), Disease != "IBD", #,
+          Country != "Israel", !is.na(Country_group)) %>% 
+  #        !is.na(Sex), !is.na(BMI), !is.na(Age)) %>%
+   mutate(across(where(is.factor), ~fct_drop(.)))
+
+
+META_G_TAXA_ALL$Sample_ID <- paste(META_G_TAXA_ALL$Source, ".v.", META_G_TAXA_ALL$Sample_ID, sep = "")
+rownames(META_G_TAXA_ALL) <- META_G_TAXA_ALL$Sample_ID
+
+META_G_TAXA_ALL[, -c(1:14)] <- lapply(META_G_TAXA_ALL[, -c(1:14)], function(x) {
+  x <- as.numeric(as.character(x)) 
+  x[is.na(x)] <- 0 
+  return(x)
+})
+table(META_G_TAXA_ALL$Country_group,META_G_TAXA_ALL$Disease)
+``` 
+
+```{r}
+meta_data <- META_G_TAXA_ALL 
+columns_to_remove <- c("Sex", "Age", "BMI", "Race", "FCP", "Center", "Country", 
+                       "Disease_status","Obesity", "Age_group")
+
+meta_data <- META_G_TAXA_ALL[, !(names(META_G_TAXA_ALL) %in% columns_to_remove)]
+meta_data <- meta_data[, !grepl("^g__GG", names(G_TAXA_FROM_METAPHLAN))] # drop unclassified genus
+
+```
+
+# 2. Differential Abundance (DA) Analysis with ANCOM-BC
+
+```{r}
+run_ancom <- function(meta_data, obs_abn, comparison_text, diagnosis_group, vars.grups, diagnosis) {
+
+  # Convert Disease column to character
+meta_data[[vars.grups]] <- factor(as.character(meta_data[[vars.grups]]),levels = c("nonIBD", diagnosis))
+  
+  # Generate Sample_ID
+  meta_data$Sample_ID <- seq(nrow(meta_data))
+  
+  # Adjust column names for obs_abn to match Sample_IDs
+  colnames(obs_abn) <- seq(nrow(meta_data))
+  
+  # Remove first 8 rows from obs_abn as per original code snippet
+  obs_abn <- obs_abn[5:nrow(obs_abn), ]
+  
+  # Prepare feature.table
+  original_row_names <- rownames(obs_abn)
+  feature.table <- as.data.frame(sapply(obs_abn, function(x) as.numeric(as.character(x))), stringsAsFactors = FALSE)
+  rownames(feature.table) <- original_row_names
+  feature.table <- feature.table * 100000000
+  
+  # Pre-processing
+  zero.cut=0.90; lib.cut=1000; neg.lb=TRUE
+  pre.process <- feature_table_pre_process(feature.table, meta_data, "Sample_ID", vars.grups, zero.cut, lib.cut, neg.lb)
+  
+  feature.table <- pre.process$feature.table
+  library.size <- pre.process$library.size
+  group.name <- pre.process$group.name
+  group.ind <- pre.process$group.ind
+  struc.zero <- pre.process$structure.zeros
+  
+  # Run ANCOM-BC
+  grp.name=group.name; grp.ind=group.ind; adj.method="fdr"
+  tol.EM=1e-5; max.iterNum=100; perNum=1000; alpha=0.05
+  out <- ANCOM_BC(feature.table, group.name, group.ind, struc.zero, adj.method,tol.EM, max.iterNum, perNum, alpha)
+  
+  # Prepare result
+  res.ANCOM_BC <- data.frame(genus = rownames(out$feature.table), out$res,
+                             struc.zero[rownames(out$feature.table), ],
+                             row.names = NULL, stringsAsFactors = FALSE, check.names = FALSE)
+  
+  alpha.adj <- 0.05 / nrow(res.ANCOM_BC)
+  critic.val <- qnorm(1 - alpha.adj / 2)
+  
+  print(res.ANCOM_BC)
+  # Adjusting results based on the comparison_text
+  res.ANCOM_BC <- res.ANCOM_BC %>%
+    transmute(
+      genus,
+      log.fold.change = -get(paste0("mean.difference (", comparison_text, ")")),
+      se = get(paste0("se (", comparison_text, ")")),
+      ci.lo = log.fold.change - critic.val * se,
+      ci.up = log.fold.change + critic.val * se,
+      struc.zero = ifelse(se == 0, 1, 0),
+      q.val,
+      diagnosis.group = diagnosis_group,
+      star = ifelse(q.val < .001, "***", ifelse(q.val < .01, "**", ifelse(q.val < .05, "*", "")))
+    ) %>%
+    arrange(q.val)
+  
+  # Adding missing genera with default values
+  if(length(setdiff(original_row_names, res.ANCOM_BC$genus)) > 0) {
+    res.ANCOM_BC_00 <- data.frame(
+      genus = setdiff(original_row_names, res.ANCOM_BC$genus),
+      log.fold.change = 0, se = 0, ci.lo = 0, ci.up = 0,
+      struc.zero = 1, q.val = 1, diagnosis.group = diagnosis_group, star = "",
+      stringsAsFactors = FALSE
+    )
+    res.ANCOM_BC <- rbind(res.ANCOM_BC, res.ANCOM_BC_00)
+    # res.ANCOM_BC$diagnosis.group=factor(res.ANCOM_BC$diagnosis.group,
+    #                                levels = c(diagnosis.group))
+    res.ANCOM_BC$genus=sapply(res.ANCOM_BC$genus, function(x) strsplit(x, "__")[[1]][2])
+    res.ANCOM_BC$struc.zero=factor(res.ANCOM_BC$struc.zero)
+    #res.ANCOM_BC <- res.ANCOM_BC %>% filter((star != "") & (log.fold.change != 0)) # keep onlt segnificent taxa 
+    return(res.ANCOM_BC)
+}}
+
+```
+
+#### run ancom for CD 
+
+```{r}
+America_non <- meta_data %>% filter(Country_group%in%c("America"),(Disease%in%c("nonIBD")))
+Europe_non <- meta_data %>% filter(Country_group%in%c("Europe"),(Disease%in%c("nonIBD")))
+
+IBD_1000_amcom <- meta_data %>% filter(Source%in%c("1000 IBD"), (Disease%in%c("CD"))) 
+
+IBD_1000_amcom <- bind_rows(IBD_1000_amcom, Europe_non)
+
+Eran_Elinav_amcom_America <- meta_data %>% filter(Source%in%c("Federici et al., (2022) - America"), Country_group%in%c("America"), (Disease%in%c("CD")))
+Eran_Elinav_amcom_Europe <- meta_data %>% filter(Source%in%c("Federici et al., (2022) - Europe"), Country_group%in%c("Europe"), (Disease%in%c("CD")))
+Eran_Elinav_amcom_America <- bind_rows(Eran_Elinav_amcom_America, America_non)
+Eran_Elinav_amcom_Europe <- bind_rows(Eran_Elinav_amcom_Europe, Europe_non)
+
+HMP2_pilot_ancom <- meta_data %>% filter(Source%in%c("HMP2 Pilot"), (Disease%in%c("CD")))
+HMP2_pilot_ancom <- bind_rows(HMP2_pilot_ancom, America_non)
+
+ibdmdb_ancom <- meta_data %>% filter(Source%in%c("IBDMDB"), (Disease%in%c("CD")))
+ibdmdb_ancom <- bind_rows(ibdmdb_ancom, America_non)
+
+ibdmdb2_ancom <- meta_data %>% filter(Source%in%c("IBDMDB2"), (Disease%in%c("CD")))
+ibdmdb2_ancom <- bind_rows(ibdmdb2_ancom, America_non)
+
+Lewis_ancom <- meta_data %>% filter(Source%in%c("Lewis (2015)"), (Disease%in%c("CD")))
+Lewis_ancom <- bind_rows(Lewis_ancom, America_non)
+
+MetaHit_ancom <- meta_data %>% filter(Source%in%c("MetaHit"), (Disease%in%c("CD")))
+MetaHit_ancom <- bind_rows(MetaHit_ancom, Europe_non)
+
+MetaHit2_ancom <- meta_data %>% filter(Source%in%c("MetaHit2"), (Disease%in%c("CD")))
+MetaHit2_ancom <- bind_rows(MetaHit2_ancom, Europe_non)
+
+PRISM_ancom <- meta_data %>% filter(Source%in%c("PRISM"), (Disease%in%c("CD")))
+PRISM_ancom <- bind_rows(PRISM_ancom, America_non)
+
+df_list <- list(IBD_1000_amcom = IBD_1000_amcom,
+                Eran_Elinav_amcom_America = Eran_Elinav_amcom_America,
+                Eran_Elinav_amcom_Europe = Eran_Elinav_amcom_Europe,
+                HMP2_pilot_ancom = HMP2_pilot_ancom,
+                ibdmdb_ancom = ibdmdb_ancom,
+                ibdmdb2_ancom = ibdmdb2_ancom,
+                Lewis_ancom = Lewis_ancom, 
+                MetaHit_ancom = MetaHit_ancom,
+                MetaHit2_ancom = MetaHit2_ancom, 
+                PRISM_ancom = PRISM_ancom) 
+                
+# Apply the selection operation to each data frame in the list
+df_list <- lapply(df_list, function(df) {
+  df |> select(where(~ !all(.x == 0, na.rm = TRUE)))
+})
+list2env(df_list, envir = .GlobalEnv)
+#View(df_list$MetaHit2_ancom)
+
+feature.table_list <- lapply(df_list, function(df) {
+  # Convert columns (except the first 4) to numeric
+  df[, -c(1:4)] <- lapply(df[, -c(1:4)], function(x) as.numeric(as.character(x)))
+  
+  # Transpose the data frame
+  transposed_df <- t(df)
+  
+  # Convert the transposed matrix back to a data frame
+  transposed_df <- as.data.frame(transposed_df, stringsAsFactors = T)
+  
+  # Remove columns where all values are 0
+  cleaned_df <- transposed_df %>%
+    select(where(~ !all(.x == 0, na.rm = TRUE)))
+  
+  return(cleaned_df)
+})
+
+# Update the environment with transposed data frames
+list2env(feature.table_list, envir = .GlobalEnv)
+```
+
+```{r}
+res.ANCOM_BC_0 <- run_ancom(df_list$IBD_1000_amcom, feature.table_list$IBD_1000_amcom, "CD - nonIBD", "1000 IBD", "Disease", "CD")
+res.ANCOM_BC_1 <- run_ancom(df_list$Eran_Elinav_amcom_America, feature.table_list$Eran_Elinav_amcom_America, "CD - nonIBD", "Federici et al., (2022) - America", "Disease", "CD")
+res.ANCOM_BC_2 <- run_ancom(df_list$Eran_Elinav_amcom_Europe, feature.table_list$Eran_Elinav_amcom_Europe, "CD - nonIBD", "Federici et al., (2022) - Europe", "Disease", "CD")
+res.ANCOM_BC_3 <- run_ancom(df_list$ibdmdb_ancom, feature.table_list$ibdmdb_ancom, "CD - nonIBD", "IBDMDB", "Disease", "CD")
+res.ANCOM_BC_4 <- run_ancom(df_list$ibdmdb2_ancom, feature.table_list$ibdmdb2_ancom, "CD - nonIBD", "IBDMDB2", "Disease", "CD")
+res.ANCOM_BC_5 <- run_ancom(df_list$HMP2_pilot_ancom, feature.table_list$HMP2_pilot_ancom, "CD - nonIBD", "HMP2 Pilot", "Disease", "CD")
+res.ANCOM_BC_6 <- run_ancom(df_list$Lewis_ancom, feature.table_list$Lewis_ancom, "CD - nonIBD", "Lewis (2015)", "Disease", "CD")
+res.ANCOM_BC_7 <- run_ancom(df_list$MetaHit_ancom, feature.table_list$MetaHit_ancom, "CD - nonIBD", "MetaHit", "Disease", "CD")
+res.ANCOM_BC_8 <- run_ancom(df_list$MetaHit2_ancom, feature.table_list$MetaHit2_ancom, "CD - nonIBD", "MetaHit2", "Disease", "CD")
+res.ANCOM_BC_9 <- run_ancom(df_list$PRISM_ancom, feature.table_list$PRISM_ancom, "CD - nonIBD", "PRISM", "Disease", "CD")
+```
+
+```{r}
+#png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_50_sample_s_levels.png", width = 12000, height = 8000, res = 1200)
+png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_trend_g_levels_all_log_CD.png", width = 8000, height = 20000, res = 1200)
+
+res.ANCOM_BC_US <- rbind(res.ANCOM_BC_1,  res.ANCOM_BC_3,
+               res.ANCOM_BC_4, res.ANCOM_BC_5, res.ANCOM_BC_6, res.ANCOM_BC_9)
+
+res.ANCOM_BC_EURO <- rbind(res.ANCOM_BC_0,res.ANCOM_BC_2, res.ANCOM_BC_7,
+               res.ANCOM_BC_8, res.ANCOM_BC_9)
+
+res.ANCOM_BC_all <- rbind(res.ANCOM_BC_US, res.ANCOM_BC_EURO)
+res.ANCOM_BC_all <- res.ANCOM_BC_all %>%
+  filter(!str_starts(genus, "GG")) %>%
+  # Uncomment the next line if you need to exclude "Candidatus_Borkfalkia"
+  # filter(genus != "Candidatus_Borkfalkia") %>%
+  filter(log.fold.change != 0, se != 0) %>%
+  group_by(genus) %>%
+  mutate(has_non_empty_star = any(star != "")) %>%
+  ungroup() %>%
+  filter(has_non_empty_star | genus %in% c("Alistipes", "Prevotella", "Faecalicatena")) %>%
+  select(-has_non_empty_star)
+
+
+res.ANCOM_BC_US =cbind(res.ANCOM_BC_US , type= "(nonIBD vs CD)")
+res.ANCOM_BC_EURO=cbind(res.ANCOM_BC_EURO, type= "(nonIBD vs CD)")
+res.ANCOM_BC_all=cbind(res.ANCOM_BC_all, type= "(nonIBD vs CD)")
+
+res.ANCOM_BC_US$genus=factor(res.ANCOM_BC_US$genus, levels = sort(unique(res.ANCOM_BC_US$genus)))
+genus=unique(res.ANCOM_BC_US$genus)
+
+res.ANCOM_BC_EURO$genus=factor(res.ANCOM_BC_EURO$genus, levels = sort(unique(res.ANCOM_BC_EURO$genus)))
+genus=unique(res.ANCOM_BC_EURO$genus)
+
+res.ANCOM_BC_all$genus=factor(res.ANCOM_BC_all$genus, levels = sort(unique(res.ANCOM_BC_all$genus)))
+genus=unique(res.ANCOM_BC_all$genus)
+
+
+p1 <- ggplot(res.ANCOM_BC_all, aes(x=genus, y=log.fold.change, ymin=ci.lo, ymax=ci.up, group=diagnosis.group)) +
+  geom_bar(aes(fill=diagnosis.group), stat="identity", width=0.4, position=position_dodge())+
+  geom_errorbar(width=0.2, size=0.25, position=position_dodge(width = 0.4))+
+  geom_abline(slope = 0, intercept = 0, linetype="dashed", alpha=0.5)+
+  labs(x=NULL, y="Log Fold Change")+coord_flip()+
+  scale_fill_discrete(name=NULL)+
+  scale_x_discrete(limits = rev(levels(res.ANCOM_BC_all$genus)))+
+  scale_fill_manual(values=sector_color_palette) + 
+  facet_grid(.~type, scales = "free_x")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill="white"))+
+  geom_text(aes(y=log.fold.change+5*sign(log.fold.change), label=star),
+            vjust=.7, color="black", position=position_dodge(width = 0.5), size =2)
+
+p1+geom_point(data = res.ANCOM_BC_all%>%filter(struc.zero==1), aes(x=genus, y=log.fold.change),
+                   position=position_dodge(width = 0.4), shape=18)
+
+#ggarrange(p1, labels = "a")
+#ggsave("../figures/Figure 6a.pdf", width=10, height=5, units='in')
+dev.off()
+```
+
+#### run ancom for UC 
+```{r}
+IBD_1000_amcom <- meta_data %>% filter(Source%in%c("1000 IBD"), (Disease%in%c("UC"))) 
+
+IBD_1000_amcom <- bind_rows(IBD_1000_amcom, Europe_non)
+
+Eran_Elinav_amcom_America <- meta_data %>% filter(Source%in%c("Federici et al., (2022) - America"), Country_group%in%c("America"), (Disease%in%c("UC")))
+Eran_Elinav_amcom_Europe <- meta_data %>% filter(Source%in%c("Federici et al., (2022) - Europe"), Country_group%in%c("Europe"), (Disease%in%c("UC")))
+Eran_Elinav_amcom_America <- bind_rows(Eran_Elinav_amcom_America, America_non)
+Eran_Elinav_amcom_Europe <- bind_rows(Eran_Elinav_amcom_Europe, Europe_non)
+
+HMP2_pilot_ancom <- meta_data %>% filter(Source%in%c("HMP2 Pilot"), (Disease%in%c("UC")))
+HMP2_pilot_ancom <- bind_rows(HMP2_pilot_ancom, America_non)
+
+ibdmdb_ancom <- meta_data %>% filter(Source%in%c("IBDMDB"), (Disease%in%c("UC")))
+ibdmdb_ancom <- bind_rows(ibdmdb_ancom, America_non)
+
+ibdmdb2_ancom <- meta_data %>% filter(Source%in%c("IBDMDB2"), (Disease%in%c("UC")))
+ibdmdb2_ancom <- bind_rows(ibdmdb2_ancom, America_non)
+
+Lewis_ancom <- meta_data %>% filter(Source%in%c("Lewis (2015)"), (Disease%in%c("UC")))
+Lewis_ancom <- bind_rows(Lewis_ancom, America_non)
+
+MetaHit_ancom <- meta_data %>% filter(Source%in%c("MetaHit"), (Disease%in%c("UC")))
+MetaHit_ancom <- bind_rows(MetaHit_ancom, Europe_non)
+
+MetaHit2_ancom <- meta_data %>% filter(Source%in%c("MetaHit2"), (Disease%in%c("UC")))
+MetaHit2_ancom <- bind_rows(MetaHit2_ancom, Europe_non)
+
+PRISM_ancom <- meta_data %>% filter(Source%in%c("PRISM"), (Disease%in%c("UC")))
+PRISM_ancom <- bind_rows(PRISM_ancom, America_non)
+
+df_list <- list(IBD_1000_amcom = IBD_1000_amcom,
+                Eran_Elinav_amcom_America = Eran_Elinav_amcom_America,
+                Eran_Elinav_amcom_Europe = Eran_Elinav_amcom_Europe,
+                HMP2_pilot_ancom = HMP2_pilot_ancom,
+                ibdmdb_ancom = ibdmdb_ancom,
+                ibdmdb2_ancom = ibdmdb2_ancom,
+                Lewis_ancom = Lewis_ancom, 
+                MetaHit_ancom = MetaHit_ancom,
+                MetaHit2_ancom = MetaHit2_ancom, 
+                PRISM_ancom = PRISM_ancom) 
+                
+# Apply the selection operation to each data frame in the list
+df_list <- lapply(df_list, function(df) {
+  df |> select(where(~ !all(.x == 0, na.rm = TRUE)))
+})
+list2env(df_list, envir = .GlobalEnv)
+#View(df_list$MetaHit2_ancom)
+
+feature.table_list <- lapply(df_list, function(df) {
+  # Convert columns (except the first 4) to numeric
+  df[, -c(1:4)] <- lapply(df[, -c(1:4)], function(x) as.numeric(as.character(x)))
+  
+  # Transpose the data frame
+  transposed_df <- t(df)
+  
+  # Convert the transposed matrix back to a data frame
+  transposed_df <- as.data.frame(transposed_df, stringsAsFactors = T)
+  
+  # Remove columns where all values are 0
+  cleaned_df <- transposed_df %>%
+    select(where(~ !all(.x == 0, na.rm = TRUE)))
+  
+  return(cleaned_df)
+})
+
+# Update the environment with transposed data frames
+list2env(feature.table_list, envir = .GlobalEnv)
+```
+
+```{r}
+res.ANCOM_BC_0 <- run_ancom(df_list$IBD_1000_amcom, feature.table_list$IBD_1000_amcom, "UC - nonIBD", "1000 IBD", "Disease", "UC")
+res.ANCOM_BC_1 <- run_ancom(df_list$Eran_Elinav_amcom_America, feature.table_list$Eran_Elinav_amcom_America, "UC - nonIBD", "Federici et al., (2022) - America", "Disease", "UC")
+res.ANCOM_BC_2 <- run_ancom(df_list$Eran_Elinav_amcom_Europe, feature.table_list$Eran_Elinav_amcom_Europe, "UC - nonIBD", "Federici et al., (2022) - Europe", "Disease", "UC")
+res.ANCOM_BC_3 <- run_ancom(df_list$ibdmdb_ancom, feature.table_list$ibdmdb_ancom, "UC - nonIBD", "IBDMDB", "Disease", "UC")
+res.ANCOM_BC_4 <- run_ancom(df_list$ibdmdb2_ancom, feature.table_list$ibdmdb2_ancom, "UC - nonIBD", "IBDMDB2", "Disease", "UC")
+res.ANCOM_BC_5 <- run_ancom(df_list$HMP2_pilot_ancom, feature.table_list$HMP2_pilot_ancom, "UC - nonIBD", "HMP2 Pilot", "Disease", "UC")
+#res.ANCOM_BC_6 <- run_ancom(df_list$Lewis_ancom, feature.table_list$Lewis_ancom, "UC - nonIBD", "Lewis (2015)", "Disease")
+res.ANCOM_BC_7 <- run_ancom(df_list$MetaHit_ancom, feature.table_list$MetaHit_ancom, "UC - nonIBD", "MetaHit", "Disease", "UC")
+res.ANCOM_BC_8 <- run_ancom(df_list$MetaHit2_ancom, feature.table_list$MetaHit2_ancom, "UC - nonIBD", "MetaHit2", "Disease", "UC")
+res.ANCOM_BC_9 <- run_ancom(df_list$PRISM_ancom, feature.table_list$PRISM_ancom, "UC - nonIBD", "PRISM", "Disease", "UC")
+```
+
+```{r}
+#png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_50_sample_s_levels.png", width = 12000, height = 8000, res = 1200)
+png(filename = "~/metaanalysis/datasets/ANCOM/ANCOM_all_trend_g_levels_all_log_UC.png", width = 8000, height = 20000, res = 1200)
+
+res.ANCOM_BC_US <- rbind(res.ANCOM_BC_1,  res.ANCOM_BC_3,
+               res.ANCOM_BC_4, res.ANCOM_BC_5, res.ANCOM_BC_6, res.ANCOM_BC_9)
+
+res.ANCOM_BC_EURO <- rbind(res.ANCOM_BC_0,res.ANCOM_BC_2, res.ANCOM_BC_7,
+               res.ANCOM_BC_8, res.ANCOM_BC_9)
+
+res.ANCOM_BC_all <- rbind(res.ANCOM_BC_US, res.ANCOM_BC_EURO)
+res.ANCOM_BC_all <- res.ANCOM_BC_all %>%
+  filter(!str_starts(genus, "GG")) %>%
+  # Uncomment the next line if you need to exclude "Candidatus_Borkfalkia"
+  # filter(genus != "Candidatus_Borkfalkia") %>%
+  filter(log.fold.change != 0) %>%
+  group_by(genus) %>%
+  mutate(has_non_empty_star = any(star != "")) %>%
+  ungroup() %>%
+  filter(has_non_empty_star | genus %in% c("Alistipes", "Prevotella", "Faecalicatena")) %>%
+  select(-has_non_empty_star)
+
+
+res.ANCOM_BC_US =cbind(res.ANCOM_BC_US , type= "(nonIBD vs UC)")
+res.ANCOM_BC_EURO=cbind(res.ANCOM_BC_EURO, type= "(nonIBD vs UC)")
+res.ANCOM_BC_all=cbind(res.ANCOM_BC_all, type= "(nonIBD vs UC)")
+
+res.ANCOM_BC_US$genus=factor(res.ANCOM_BC_US$genus, levels = sort(unique(res.ANCOM_BC_US$genus)))
+genus=unique(res.ANCOM_BC_US$genus)
+
+res.ANCOM_BC_EURO$genus=factor(res.ANCOM_BC_EURO$genus, levels = sort(unique(res.ANCOM_BC_EURO$genus)))
+genus=unique(res.ANCOM_BC_EURO$genus)
+
+res.ANCOM_BC_all$genus=factor(res.ANCOM_BC_all$genus, levels = sort(unique(res.ANCOM_BC_all$genus)))
+genus=unique(res.ANCOM_BC_all$genus)
+
+
+p1 <- ggplot(res.ANCOM_BC_all, aes(x=genus, y=log.fold.change, ymin=ci.lo, ymax=ci.up, group=diagnosis.group)) +
+  geom_bar(aes(fill=diagnosis.group), stat="identity", width=0.8, position=position_dodge())+
+  geom_errorbar(width=0.2, size=0.25, position=position_dodge(width = 0.8))+
+  geom_abline(slope = 0, intercept = 0, linetype="dashed", alpha=0.5)+
+  labs(x=NULL, y="Log Fold Change")+coord_flip()+
+  scale_fill_discrete(name=NULL)+
+  scale_x_discrete(limits = rev(levels(res.ANCOM_BC_all$genus)))+
+  scale_fill_manual(values=sector_color_palette) + 
+  facet_grid(.~type, scales = "free_x")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill="white"))+
+  geom_text(aes(y=log.fold.change+5*sign(log.fold.change), label=star),
+            vjust=.7, color="black", position=position_dodge(width = 0.5), size =1)
+
+p1+geom_point(data = res.ANCOM_BC_all%>%filter(struc.zero==1), aes(x=genus, y=log.fold.change),
+                   position=position_dodge(width = 0.2), shape=18)
+
+#ggarrange(p1, labels = "a")
+#ggsave("../figures/Figure 6a.pdf", width=10, height=5, units='in')
+dev.off()
+```
+
+
+
