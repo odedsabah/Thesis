@@ -1,0 +1,5 @@
+XML_EBI/XML_Files/
+mp4.simulation/*.txt
+mp4.simulation/*.stdout
+Rarefaction/Code/CALCULATE_THRESHOLD/*.sam
+Rarefaction/Code/CALCULATE_THRESHOLD/*.sam.log
