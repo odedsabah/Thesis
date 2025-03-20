@@ -137,7 +137,7 @@ The thesis plans to analyze prior meta-analyses with focus on:
 
 | Question | Details to Extract |
 |----------|-------------------|
-| Data Types | MGX or 16S rRNA sequencing |
+| Data Types | MGX |
 | Methodologies | Community profiling approach, taxonomic levels analyzed, statistical/ML methods |
 | Comparability | How authors ensured datasets were comparable |
 | Analysis Approach | Individual datasets or combined analysis |
