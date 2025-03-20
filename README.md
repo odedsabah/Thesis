@@ -1,178 +1,168 @@
-# Oded's M.Sc. thesis
+# Comprehensive Analysis of Oded's M.Sc. Thesis
 
-## Research question
-Can we identify a consistent set of taxa that are associated with Crohn's disease/Ulcerative colitis compared to healthy humans?
+## Thesis Overview
 
-We want to:
-* Determine the best practices in comparing phenotypes
-* Apply these practices to available datasets of IBD vs control to identify the taxa
+This thesis investigates the relationship between Inflammatory Bowel Disease (IBD) - specifically Crohn's Disease (CD) and Ulcerative Colitis (UC) - and the human gut microbiome. The primary research question is to identify a consistent set of taxa that distinguish between IBD patients and healthy controls across multiple datasets.
 
-### Best practices
-* Should we do rarefaction for MGX datasets (yes we should, work already done)
-* Decide the effect of metadata such as age, sex, country and calcprotectin on the microbiome. All these factors are not related to the question we ask but may be very different between datasets and should be accounted for
-* Decide whether datasets are comparable
-* Find a reliable method for determining statistically significant features. We do not want to rely on the assumptions made when the method was developed but instead find a method for identifying significant features that is agnostic to the method that is used. 
+## Research Questions and Objectives
 
-#### Evaluating the effect of metadata on the microbiome
-We will do the following comparisons on each dataset's control group:
-* Foreach feature in \{age, sex, country, random\}:
-  - match samples by the feature
-  - Calculate the Jaccard and Bray-Curtis distance distributions for the features
-* Plot the boxplots for each feature
-* Plot histograms for the distribution of ages, and barplots for the sex and country features
-* Check if the difference between each feature and the random pairs is statistically significant. Another option is to do an anti-matching to increase the effect we are looking at.
+The thesis aims to:
 
-Note: check the PCoA of the samples. If we see clusters that are not correlated with the phenotype then we will also try it as features.
-Note 2: do the same analysis as above for the Crohn's group
+1. Determine best practices for comparing phenotypes in microbiome studies
+2. Apply these practices to available IBD datasets to identify significant taxa
+3. Establish methodological guidelines for future microbiome studies
 
-#### Deciding whether two datasets are comparable
-For each pair of datasests A and B: use the most important feature(s) to match the following:
-* Pairs (a, b) where a in A and B in B
-* Pairs (a1, a2) where a1, a2 in A
-* Pairs (b1, b2) where b1, b2 in B
+## Methodological Considerations
 
-Draw boxplots, check if the distribution of beta diversity if significantly different between the two datasets compared to in-dataset pairs
+### Best Practices Being Explored
 
-#### Finding a method for evaluating the significant features produced by a method such as LefSe
-1. Run the method on the data with the original labeling
+| Practice | Key Question | Approach |
+|----------|--------------|----------|
+| Rarefaction | Should rarefaction be performed for metagenomics (MGX) datasets? | Yes (work already completed) |
+| Metadata Effects | How do factors like age, sex, country, and calprotectin influence the microbiome? | Statistical analysis of control groups |
+| Dataset Comparability | Are different datasets comparable? | Beta diversity analysis between matched samples |
+| Feature Significance | What is a reliable method for determining statistically significant taxa? | Method-agnostic approach with randomization tests |
+
+### Evaluating Metadata Effects on Microbiome
+
+The thesis proposes the following analysis workflow:
+
+1. For each control group in each dataset:
+   - Match samples based on features (age, sex, country)
+   - Calculate Jaccard and Bray-Curtis distance distributions
+   - Compare against random pairs as baseline
+2. Visualization approach:
+   - Box plots for each feature
+   - Histograms for age distribution
+   - Bar plots for sex and country distributions
+3. Statistical testing:
+   - Test significance of differences between feature-matched and random pairs
+   - Consider anti-matching to amplify effects
+4. Extended analysis:
+   - Examine PCoA plots for unexpected clustering
+   - Repeat analysis for Crohn's disease group
+
+### Assessing Dataset Comparability
+
+For each pair of datasets (A and B):
+
+1. Match samples based on important features:
+   - Cross-dataset pairs (a, b) where a ∈ A and b ∈ B
+   - Within-dataset pairs (a₁, a₂) where a₁, a₂ ∈ A
+   - Within-dataset pairs (b₁, b₂) where b₁, b₂ ∈ B
+2. Draw boxplots of beta diversity distributions
+3. Test if between-dataset diversity is significantly different from within-dataset diversity
+
+### Finding Significant Features
+
+The thesis proposes this methodology:
+
+1. Run feature selection method on data with original phenotype labels
 2. Repeat 10 times:
-   a. randomly split the case and control groups in the proportion of the original case and control
-   b. Run the method
-   c. find the highest random score, use it as a cutoff and keep only values above it in the phenotype-based run
-3. Reapeat this approach for multiple methods that find differentiating taxa on the same dataset(s) and compare the lists  
+   - Randomly split case and control groups in original proportions
+   - Run feature selection method
+   - Find highest random score and use as cutoff
+3. Compare results across multiple feature selection methods
 
-### Comparison of IBD databases
-TBD
+## Data Sources and Datasets
 
-## High-level plan
-0. Do literature search about similar meta-analysis projects
-1. Identify relevant datasets
-2. Determine dataset metadata for each dataset
-3. Read literature, understand how people generate such lists
-4. Determine community composition for each sample
-5. Determine whether the datasets are comparable
-6. Decide bioinformatics/statistical procedure for determining list
-7. Analyze the results
+### Potential Datasets for Analysis
 
-## Workplan
-### 0. Do literature search about similar meta-analysis projects
-We are interested in other meta-anlyses that were done on IBD or other diseases.
-Create a table with answers to the following:
-* What data was used? MGX, 16S?
-* What methods were used? How was community profiling done, did the authors look at different taxonomic levels separately or all together, what statictical/ML methods were used to create the list?
-* Did the authors made sure that the data is comparable (e.g. by comparing the control?)
-* Did the authors analyze each dataset separately or all the datasets together? 
-* Did the different datasets were considered based on their size relative to other datasets? Was the same number of samples taken from each dataset? 
-* Did the authors took into account time-series datases?
-* Were metadata (age, sex, nationality, calprotectin) taken into account?
+![Dataset Relationships](datasets/circle_graph.png)
 
-### 1. Identify relevant datasets
-Create a table with all the datasets we will work on. Consider the following datasets:
-MGX Available on vega:
-* ibdmdb [paper](https://www.nature.com/articles/s41586-019-1237-9). CD: ```/data1/Human/ibdmdb/CD/```, UC: ```/data1/Human/ibdmdb/UC/```, control: ```/data1/Human/ibdmdb/control/```
-* ibdmdb pilot. 
-* metahit
-* metahit2
-* Lewis
-* HMP1
-* HMP2
-* HMP3
-* Gevers (PRJNA237362): [paper](https://www.sciencedirect.com/science/article/pii/S1931312814000638)
-* Eran Elinav's paper (only part of the data is available on vega) [paper](https://pubmed.ncbi.nlm.nih.gov/35931020/)
-* EGAD00001001991
-Also look for other data.
+*Figure 1: Visualization of relationships between the analyzed datasets*
 
-For each project, the raw data for the samples is located under the raw.d directory, e.g. ```/data2/Human/HMP.phase1/Stool/raw.d```. Sample statistics file is named <something>.read-stats.txt under raw.d. For example: ```/data2/Human/HMP.phase1/Stool/raw.d/Stool.read-stats.txt```. Open an issue is this file does not exist.
+### Metadata to Collect
 
-To find the number of samples and the average sequencing depth:
-```
-tail -n +3 /data2/Human/HMP.phase1/Stool/raw.d/Stool.read-stats.txt | awk '{n++; bp+=($5+$8)} END{print n"\t"(bp/(n*1000000000))}'
-```
-  
-  Required information:
-* In the table:
-  * Project name
-  * Project NCBI/other ID if available
-  * Project paper
-  * Number of control samples
-  * Number of CD samples
-  * Number of UC samples
-  * Is time series?
-  * Average sequencing depth (number of bps)
-  * Sequencing technology (Illumina)
-  * Read size (150bp...)
-* For each sample, we would like to get the following metadata:
+For each sample, the thesis aims to collect:
 
-To get the read size, pick a random fastq file for one of the samples and run
-```
-gunzip -c mysample.1.fastq.gz | awk '{if(NR%4==2) {print length($0)}}' | head
-```
+| Metadata Category | Description |
+|-------------------|-------------|
+| Project ID | Dataset identifier |
+| Sample ID | Unique sample identifier |
+| Subject ID | Subject/patient identifier |
+| Time | Sampling timepoint |
+| Sequencing Depth | Number of reads and base pairs |
+| Health Status | Healthy, CD, UC, or general IBD |
+| Demographics | Age, sex, country |
+| Clinical Markers | Calprotectin (FCP) |
+| Sample Quality | Human DNA percentage |
+| Medication | Antibiotics use, steroids use |
 
-For each project download the metadata file.
+## Analysis Pipeline
 
-### 2. High-level view of the meta-analysis process
-These are the steps that we plan to take:
-1. Evaluate community composition for the samples
-2. Evaluate the comparability between the datasets
-3. Naive approach 1: find separating taxa between the group of healthy and controls in each dataset
-4. Naive approach 2: look for differences in community composition between healthy and CD/UC (beta-diversity)
-5. Less naive: consider other parameters (age, sex, health status)
-6. Conclusions?
-7. Guidelines regarding performing an experiment
-   * What is the minimal number of participants required for a dataset to discover differentiating taxa?
-   * What is the minimal abundance for taxa that should be considered?
-   * At what taxonomic level(s) can we see differences?
- 
-### 3. Low-level view of the meta-analysis process
-#### 3.1. Evaluate community composition for the samples
+### High-Level Analysis Plan
 
-*How to choose an algorithm?*
+1. Literature review of similar meta-analyses
+2. Dataset identification and metadata collection
+3. Understanding prior approaches to taxa list generation
+4. Determining community composition for each sample
+5. Assessing dataset comparability
+6. Establishing a bioinformatics/statistical procedure
+7. Results analysis and conclusions
 
-We will choose metaphlan4 because it is the most popular algorithm with the most updated database of all. Kraken2 and Centrifuge provide a lot of false positives and mOTUs2 does not have sufficiently large reference database.
+### Low-Level Analysis Process
 
-*How to do rarefaction?*
-We need to identify, for each threshold (e.g. 1%, 0.1%, 0.01%), what is the number of reads that is required to get "everything".
-How we will do it:
-1. Identify very large samples (Eran Elinav's dataset have some)
-2. Run metaphlan4 on the entire dataset (done)
-3. for each n in (1M, 2M, 3M, 4M, 5M, 6M, 8M, 10M, 12M, 14M, 16M, 18M, 20M, 25M, 30M, 35M, 40M, 45M, 50M, 60M, 70M, ...): 
-   * Create a dataset of the required size by selecting every (sample size)//n read
-   * Run metaphlan4 on the sample
-   * delete the sample
-4. For each threshold (1, 0.1, 0.01):
-   * Calculate Jaccard index of species above the threshold and the entire sample. Create a graph that shows that
-   * Calculate the difference in relative abundance between each sub-sample and the complete sample
-   
-For development, use this sample (5,243,596 reads):
-```
-/data2/Human/PRJEB50555/raw.d/SAMEA110452936/9841_R1.fastq.gz
-```
+#### 1. Community Composition Analysis
 
-For actual analysis, use this sample (299,380,873 reads)
-```
-/data2/Human/PRJEB50555/raw.d/SAMEA110452975/9836_R1.fastq.gz 
-```
+**Tool Selection:**
+- Using MetaPhlAn4 due to:
+  - Popularity and widespread use
+  - Most updated reference database
+  - Better precision compared to Kraken2/Centrifuge
+  - More comprehensive than mOTUs2
 
-Running metaphlan4:
-```
+**Rarefaction Analysis:**
+- Using large samples (e.g., SAMEA110452975 with 299,380,873 reads)
+- Creating subsamples at multiple depths (1M to 70M+ reads)
+- Evaluating Jaccard index at different abundance thresholds (1%, 0.1%, 0.01%)
+- Measuring differences in relative abundance between subsamples and complete samples
+
+**Example Command:**
+```bash
 conda activate base
 /home/itaish/software/processing/run-metaphlan4.sh
 ```
-#### 3.2. Information required for each sample
-* Project ID
-* Sample ID
-* Subject ID
-* Time
-* Number of reads
-* Number of bps
-* Health status (Healthy, CD, UC, IBD)
-* Age
-* Sex
-* Country
-* Calprotectin (FCP)
-* Human DNA %
-* Antibiotics (use/not.use)
-* Steroids (use/not.use)
-Break down these demographics to do comparisons
 
+#### 2. Dataset Comparability
 
+**Naive Approaches:**
+1. Finding separating taxa between healthy and IBD groups in each dataset
+2. Analyzing differences in community composition (beta-diversity)
+
+**Advanced Approach:**
+- Considering confounding parameters (age, sex, health status)
+
+#### 3. Developing Guidelines
+
+The thesis aims to establish guidelines for future studies:
+- Minimum number of participants required
+- Minimum abundance threshold for meaningful taxa
+- Optimal taxonomic levels for observing differences
+
+## Literature Review Focus
+
+The thesis plans to analyze prior meta-analyses with focus on:
+
+| Question | Details to Extract |
+|----------|-------------------|
+| Data Types | MGX or 16S rRNA sequencing |
+| Methodologies | Community profiling approach, taxonomic levels analyzed, statistical/ML methods |
+| Comparability | How authors ensured datasets were comparable |
+| Analysis Approach | Individual datasets or combined analysis |
+| Dataset Weighting | Were datasets weighted by size or equally sampled? |
+| Time Series | How were time series datasets handled? |
+| Metadata | Were factors like age, sex, nationality, calprotectin considered? |
+
+## Computational Resources
+
+The thesis utilizes server resources with data located in specific directories:
+- Raw data: `/data2/Human/[Project]/Stool/raw.d/`
+- Sample statistics: `[Project].read-stats.txt`
+
+## Expected Outcomes
+
+1. A consistent set of taxa associated with IBD
+2. Methodological guidelines for microbiome comparison studies
+3. Insights into required sequencing depth and sample sizes
+4. Framework for handling confounding variables in microbiome studies
