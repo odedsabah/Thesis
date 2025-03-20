@@ -14,15 +14,6 @@ The thesis aims to:
 
 ## Methodological Considerations
 
-### Best Practices Being Explored
-
-| Practice | Key Question | Approach |
-|----------|--------------|----------|
-| Rarefaction | Should rarefaction be performed for metagenomics (MGX) datasets? | Yes (work already completed) |
-| Metadata Effects | How do factors like age, sex, country, and calprotectin influence the microbiome? | Statistical analysis of control groups |
-| Dataset Comparability | Are different datasets comparable? | Beta diversity analysis between matched samples |
-| Feature Significance | What is a reliable method for determining statistically significant taxa? | Method-agnostic approach with randomization tests |
-
 ### Evaluating Metadata Effects on Microbiome
 
 The thesis proposes the following analysis workflow:
